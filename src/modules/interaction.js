@@ -1,11 +1,59 @@
-import { getSettings, saveSettings, isMobileUI, updateLayout } from "./core.js";
+﻿import { getSettings, saveSettings, isMobileUI, updateLayout } from "./core.js";
 import { initDragging } from "./dragging.js";
-import { initBattle } from "./battle.js";
+import { initBattle, renderBattle } from "./battle.js";
 import { init as initInventory } from "./features/items.js";
 import { initShop } from "./shop.js";
 import { notify } from "./notifications.js";
 
 let uieMenuTabSwitchedAt = 0;
+
+let uieBattlePopupBridgeInited = false;
+let uieBattlePopupLastOpenAt = 0;
+
+function initBattlePopupBridge() {
+    if (uieBattlePopupBridgeInited) return;
+    uieBattlePopupBridgeInited = true;
+
+    window.addEventListener("uie:battle_detected", function () {
+        try {
+            const s = getSettings();
+            if (!s || s.enabled === false) return;
+
+            const now = Date.now();
+            if (now - uieBattlePopupLastOpenAt < 2000) return;
+            uieBattlePopupLastOpenAt = now;
+
+            const mobileNow = (() => {
+                try {
+                    if (isMobileUI()) return true;
+                    return window.matchMedia("(max-width: 768px), (pointer: coarse)").matches;
+                } catch (_) {
+                    return false;
+                }
+            })();
+            if (mobileNow) {
+                try { notify("warning", "Combat detected. Open War Room from menu.", "War Room", "api"); } catch (_) {}
+                return;
+            }
+
+            openWindow("#uie-battle-window");
+            try { initBattle(); } catch (_) {}
+            try { renderBattle(); } catch (_) {}
+            try { notify("warning", "Combat detected. War Room opened.", "War Room", "api"); } catch (_) {}
+        } catch (_) {}
+    });
+
+    const refreshBattleIfVisible = () => {
+        try {
+            const $win = $("#uie-battle-window");
+            if (!$win.length || !$win.is(":visible")) return;
+            renderBattle();
+        } catch (_) {}
+    };
+
+    window.addEventListener("uie:battle_state_updated", refreshBattleIfVisible);
+    window.addEventListener("uie:state_updated", refreshBattleIfVisible);
+}
 
 async function ensureSettingsWindowLoaded() {
     try {
@@ -43,6 +91,25 @@ async function ensureSettingsWindowLoaded() {
 }
 
 function initStWandUieControls() {
+    try {
+        if (window.UIE_wandControlsInited) return;
+        window.UIE_wandControlsInited = true;
+    } catch (_) {}
+
+    const needsInject = () => {
+        try {
+            const menu = document.getElementById("extensionsMenu");
+            if (!menu) return false;
+            const container = document.getElementById("uie_wand_container");
+            const btn = document.getElementById("uie_wand_button");
+            if (!container || container.parentElement !== menu) return true;
+            if (!btn || !container.contains(btn)) return true;
+            return false;
+        } catch (_) {
+            return true;
+        }
+    };
+
     const inject = () => {
         const menu = document.getElementById("extensionsMenu");
         if (!menu) return;
@@ -60,9 +127,10 @@ function initStWandUieControls() {
              menu.prepend(container);
         }
 
-        // Create our button if it doesn't exist
-        if (!document.getElementById("uie_wand_button")) {
-            const btn = document.createElement("div");
+        // Create/update button and ALWAYS (re)bind handler in case a stale node already exists.
+        let btn = document.getElementById("uie_wand_button");
+        if (!btn) {
+            btn = document.createElement("div");
             btn.id = "uie_wand_button";
             btn.className = "list-group-item flex-container flexGap5";
             btn.title = "Run UIE System Scan";
@@ -74,41 +142,77 @@ function initStWandUieControls() {
                 <div class="fa-fw fa-solid fa-radar extensionsMenuExtensionButton" style="color:#f1c40f;"></div>
                 <span>UIE Scan Now</span>
             `;
-            btn.onclick = async (e) => {
-                e.preventDefault();
-                e.stopPropagation();
-
-                // Hide the menu (standard ST behavior)
-                $(menu).hide();
-                $("#extensionsMenuButton").removeClass("active"); // Toggle button state if needed
-
-                try {
-                    const { scanAll } = await import("./orchestration.js");
-                    if (scanAll) scanAll();
-                } catch (err) {
-                    console.error("Scan failed", err);
-                }
-            };
             container.appendChild(btn);
         }
+        btn.onclick = async (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+
+            try { $(menu).hide(); } catch (_) {}
+            try { $("#extensionsMenuButton").removeClass("active"); } catch (_) {}
+
+            try {
+                // Primary path: direct unified scanner (forced).
+                const st = await import("./stateTracker.js");
+                const scanResult = await st.scanEverything?.({ force: true });
+                try {
+                    const ev = new CustomEvent("uie:state_updated", { detail: { manual: true, from: "wand_button", forceAll: true, summary: scanResult?.summary || null } });
+                    window.dispatchEvent(ev);
+                } catch (_) {}
+                try {
+                    const sum = scanResult?.summary || null;
+                    if (sum) {
+                        const bits = Object.entries(sum).filter(([, v]) => Number(v)).map(([k, v]) => `${k} ${v > 0 ? "+" : ""}${v}`);
+                        if (bits.length) window.toastr?.info?.(`AI changes: ${bits.join(", ")}`);
+                    }
+                } catch (_) {}
+                try { window.toastr?.success?.("UIE scan complete."); } catch (_) {}
+
+                // Secondary pass: orchestration/module sync helpers.
+                const { scanAll } = await import("./orchestration.js");
+                await scanAll?.();
+            } catch (err) {
+                console.error("Scan failed", err);
+                try { window.toastr?.error?.("UIE scan failed. Check console."); } catch (_) {}
+            }
+        };
     };
 
     // Try immediately
     inject();
 
     // And watch for changes (in case the menu is re-rendered)
-    const obs = new MutationObserver(() => inject());
-    obs.observe(document.body, { childList: true, subtree: true });
+    let bodyObsT = 0;
+    const obs = new MutationObserver(() => {
+        if (bodyObsT) return;
+        bodyObsT = setTimeout(() => {
+            bodyObsT = 0;
+            if (needsInject()) inject();
+        }, 120);
+    });
+    // Keep this shallow to avoid reacting to every chat token/DOM mutation.
+    obs.observe(document.body, { childList: true, subtree: false });
     
     // Also specifically watch the menu if possible
     const menu = document.getElementById("extensionsMenu");
     if (menu) {
-        const menuObs = new MutationObserver(() => inject());
+        let menuObsT = 0;
+        const menuObs = new MutationObserver(() => {
+            if (menuObsT) return;
+            menuObsT = setTimeout(() => {
+                menuObsT = 0;
+                if (needsInject()) inject();
+            }, 80);
+        });
         menuObs.observe(menu, { childList: true, subtree: true });
     }
 
-    // Fallback: Check periodically to ensure it stays visible
-    setInterval(inject, 2000);
+    // Low-overhead fallback: only attempt when missing.
+    setInterval(() => {
+        try {
+            if (needsInject()) inject();
+        } catch (_) {}
+    }, 15000);
 }
 
 // --- SCAVENGE & INTERACTION MODULE ---
@@ -118,6 +222,8 @@ export function initInteractions() {
     initSpriteInteraction();
     initLauncher();
     initMobileBackNav();
+
+    try { initBattlePopupBridge(); } catch (_) {}
 
     // Settings drawer (and other delegated UI handlers) must work even if the launcher
     // is missing/hidden or the user never opens the main menu.
@@ -697,11 +803,7 @@ function initLauncher() {
         toggleMenu(e);
     });
 
-    // Also init Menu Tabs here since it's menu related?
-    // Or maybe separate initMenu()? For now, let's stick to launcher.
-    initMenuTabs();
-    initMenuButtons();
-    initGenericHandlers();
+    // Menu handlers are initialized by initInteractions().
     initLauncherOptionsHandlers(openLauncherOptions);
 }
 
@@ -870,7 +972,7 @@ function initGenericHandlers() {
     const selectors = [
         ".uie-close-btn", ".uie-inv-close", ".uie-window-close", ".uie-p-close",
         "#uie-world-close", "#re-forge-close",
-        "#uie-party-close", "#uie-party-member-close",
+        "#uie-party-close",
         "#cal-modal-close", "#cal-rp-modal-close", "#uie-activities-close-btn",
         "#uie-social-close", "#books-reader-close", "#uie-phone-sticker-close",
         "#uie-sprites-close", "#uie-map-card-close", ".uie-sticker-close",
@@ -961,7 +1063,39 @@ function openWindow(selector) {
         }
     })();
     if (mobileNow) {
-        if (String(win.attr("id") || "") !== "uie-party-window") {
+        const winId = String(win.attr("id") || "");
+        if (winId === "uie-battle-window") {
+            win.css({
+                left: "0px",
+                top: "0px",
+                right: "auto",
+                bottom: "auto",
+                transform: "none",
+                position: "fixed",
+                width: "100vw",
+                height: "100vh",
+                maxWidth: "100vw",
+                maxHeight: "100vh",
+                borderRadius: "0"
+            });
+        } else if (winId === "uie-party-window") {
+            try {
+                const rect = win[0].getBoundingClientRect();
+                const vw = Number(window.innerWidth || 0);
+                const vh = Number(window.innerHeight || 0);
+                const isFullScreenLike =
+                    (vw > 0 && rect.width >= (vw - 12)) ||
+                    (vh > 0 && rect.height >= (vh - 12));
+
+                if (isFullScreenLike) {
+                    win.css({ left: "0px", top: "0px", right: "auto", bottom: "auto", transform: "none", position: "fixed" });
+                } else {
+                    placeCenteredClamped(win);
+                }
+            } catch (_) {
+                placeCenteredClamped(win);
+            }
+        } else {
             placeCenteredClamped(win);
         }
     }
@@ -1038,7 +1172,6 @@ function initMenuButtons() {
     // Party
     $menu.off("click.uieMenuParty").on("click.uieMenuParty", "#uie-btn-party", async function() {
         openWindow("#uie-party-window");
-        try { (await import("./party.js")).initParty?.(); } catch (_) {}
     });
 
     // Diary
@@ -1146,6 +1279,36 @@ function initMenuButtons() {
              $("#uie-main-menu").hide();
         }
     });
+
+    // Memories scan controls (settings window)
+    $(document)
+        .off("click.uieMemScanAll")
+        .on("click.uieMemScanAll", "#uie-mem-scan-all", async function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            try {
+                notify("info", "Scanning memories from start...", "Memories");
+                const mod = await import("./memories.js");
+                await mod.scanAllMemoriesFromStart?.();
+                notify("success", "Memory scan complete.", "Memories");
+            } catch (err) {
+                console.warn("[UIE] Memory full scan failed", err);
+                notify("error", "Memory scan failed.", "Memories");
+            }
+        })
+        .off("click.uieMemScanNext")
+        .on("click.uieMemScanNext", "#uie-mem-scan-next", async function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            try {
+                const mod = await import("./memories.js");
+                await mod.scanNextMemoriesChunk?.();
+                notify("success", "Scanned next memory chunk.", "Memories");
+            } catch (err) {
+                console.warn("[UIE] Memory chunk scan failed", err);
+                notify("error", "Memory chunk scan failed.", "Memories");
+            }
+        });
 }
 
 function initMenuTabs() {
@@ -1614,6 +1777,37 @@ function initMenuTabs() {
             setPopups($(this).prop("checked") === true);
         });
 
+    $(document).off("click.uieBattleTestBtn").on("click.uieBattleTestBtn", "#uie-battle-test-btn", async function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+
+        const el = this;
+        if (el?.dataset?.busy === "1") return;
+        if (el?.dataset) el.dataset.busy = "1";
+
+        const $btn = $(el);
+        const $label = $btn.find("span");
+        const prevLabel = String($label.text() || "Battle Test: Scan + Open War Room");
+        $btn.prop("disabled", true).css("opacity", "0.7");
+        $label.text("Scanning...");
+
+        try {
+            openWindow("#uie-battle-window");
+            try { initBattle(); } catch (_) {}
+
+            const battleMod = await import("./battle.js");
+            if (typeof battleMod?.scanBattleNow === "function") {
+                await battleMod.scanBattleNow();
+            }
+        } catch (err) {
+            console.error("[UIE] Battle test button failed", err);
+            try { notify("error", "Battle test failed. Check console.", "War Room", "api"); } catch (_) {}
+        } finally {
+            if (el?.dataset) el.dataset.busy = "0";
+            $btn.prop("disabled", false).css("opacity", "");
+            $label.text(prevLabel);
+        }
+    });
     const setAiAllow = (key, checked) => {
         const s = getSettings();
         if (!s.ai || typeof s.ai !== "object") s.ai = {};
@@ -2181,3 +2375,4 @@ function spawnContextMenu(x, y, title, options) {
     if (rect.right > window.innerWidth) menu.style.left = (window.innerWidth - rect.width - 10) + "px";
     if (rect.bottom > window.innerHeight) menu.style.top = (window.innerHeight - rect.height - 10) + "px";
 }
+

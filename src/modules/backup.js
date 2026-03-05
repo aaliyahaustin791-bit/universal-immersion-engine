@@ -267,9 +267,13 @@ async function importJsonFile(file) {
     if (!txt) return false;
     let obj = null;
     try {
-        obj = JSON.parse(txt);
+        const cleaned = String(txt || "").replace(/^\uFEFF/, "").trim();
+        obj = JSON.parse(cleaned);
     } catch (_) {
         obj = null;
+    }
+    if (obj && typeof obj === "object" && !Array.isArray(obj) && obj.data && typeof obj.data === "object" && !Array.isArray(obj.data)) {
+        obj = obj.data;
     }
     if (!obj || typeof obj !== "object" || Array.isArray(obj)) return false;
     const target = getSettings();

@@ -13,6 +13,8 @@ export async function init(){
   
   for (const a of list){
     const name = (a && (a.name||a.title)) ? (a.name||a.title) : "Asset";
+    const category = String(a?.category || "other").trim();
+    const owned = a?.owned !== false;
     
     const clone = template.content.cloneNode(true);
     const $card = $(clone).children().first();
@@ -26,6 +28,13 @@ export async function init(){
     
     if (a.description) {
         $card.find(".asset-desc").text(a.description).show();
+    }
+
+    if (category || owned) {
+        const chips = [];
+        if (category) chips.push(category);
+        if (owned) chips.push("owned");
+        $card.find(".asset-desc").append(`<div style="margin-top:6px;opacity:.8;font-size:.85em;">${escapeHtml(chips.join(" • "))}</div>`);
     }
     
     $l.append($card);

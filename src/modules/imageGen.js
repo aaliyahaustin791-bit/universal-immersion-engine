@@ -239,29 +239,40 @@ export async function checkAndGenerateImage(context, feature) {
     if (!s.image || !s.image.enabled) return null;
     if (s.image.features && s.image.features[feature] === false) return null;
 
-    // 1. Ask AI if we need a photo
-    const checkPrompt = `
-Context: ${context.slice(0, 1000)}
-Question: Does this context explicitly describe a visual scene, item, or character that needs a photo?
-Answer (Yes/No):`;
+    // Single-pass AI request: decide + generate prompt in one API call.
+    const combinedPrompt = `
+You are deciding whether an image should be generated, and if so, creating the prompt.
 
-    const checkRes = await generateContent(checkPrompt, "System Image Check");
+Context:
+${context.slice(0, 2000)}
 
-    if (!checkRes) return null;
-    const answer = String(checkRes).trim().toLowerCase();
+Return ONLY valid JSON with this exact shape:
+{"generate":true|false,"prompt":"string"}
 
-    // Strict check for "yes"
-    if (!answer.startsWith("yes")) return null;
+Rules:
+- Set "generate" to true only if the context explicitly describes a visual scene, item, or character that should be shown.
+- If "generate" is false, set "prompt" to an empty string.
+- If "generate" is true, make "prompt" a detailed image-generation prompt.
+- No markdown, no extra keys, no extra text.`;
 
-    // 2. Generate the Image Prompt
-    const promptGenPrompt = `
-Context: ${context.slice(0, 2000)}
-Task: Create a highly detailed, strict image generation prompt for DALL-E 3 based on the context.
-Include style details (fantasy, realistic, etc) appropriate for the setting.
-Return ONLY the prompt text.`;
+    const combinedRes = await generateContent(combinedPrompt, "System Image Decide+Prompt");
+    if (!combinedRes) return null;
 
-    const imagePrompt = await generateContent(promptGenPrompt, "System Image Prompt");
-    if (!imagePrompt) return null;
+    let shouldGenerate = false;
+    let imagePrompt = "";
+
+    try {
+        const raw = String(combinedRes).trim();
+        const m = raw.match(/\{[\s\S]*\}/);
+        if (!m) return null;
+        const parsed = JSON.parse(m[0]);
+        shouldGenerate = parsed?.generate === true;
+        imagePrompt = String(parsed?.prompt || "").trim();
+    } catch (_) {
+        return null;
+    }
+
+    if (!shouldGenerate || !imagePrompt) return null;
 
     // 3. Call Image API
     return await generateImageAPI(imagePrompt);
@@ -867,6 +878,8 @@ export function initImageUi() {
             $("#uie-img-model").val(img.model);
             if ($("#uie-img-model-select option[value='" + img.model + "']").length) {
                 $("#uie-img-model-select").val(img.model);
+            } else {
+                $("#uie-img-model-select").val("__custom__");
             }
         }
         if (img.negativePrompt) $("#uie-img-negative").val(img.negativePrompt);
@@ -1094,6 +1107,10 @@ export function initImageUi() {
 
     $(document).off("input.uieImgModel change.uieImgModel").on("input.uieImgModel change.uieImgModel", "#uie-img-model, #uie-img-model-adv", function() {
         const val = String($(this).val() || "").trim();
+        if (val) {
+            if ($("#uie-img-model-select option[value='" + val + "']").length) $("#uie-img-model-select").val(val);
+            else $("#uie-img-model-select").val("__custom__");
+        }
         syncSetting((img) => { img.model = val; });
     });
 

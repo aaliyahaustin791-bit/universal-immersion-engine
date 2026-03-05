@@ -46,6 +46,43 @@ function normIsUser(v) {
     return false;
 }
 
+function isDeletedLikeFlag(v) {
+    if (v === true) return true;
+    const s = String(v ?? "").toLowerCase().trim();
+    return s === "true" || s === "1" || s === "deleted" || s === "hidden";
+}
+
+function isInactiveArrayMessage(m) {
+    try {
+        if (!m || typeof m !== "object") return true;
+        if (isDeletedLikeFlag(m.deleted) || isDeletedLikeFlag(m.is_deleted) || isDeletedLikeFlag(m.isDeleted)) return true;
+        if (isDeletedLikeFlag(m.hidden) || isDeletedLikeFlag(m.is_hidden) || isDeletedLikeFlag(m.isHidden)) return true;
+        if (isDeletedLikeFlag(m.swiped) || isDeletedLikeFlag(m.is_swiped) || isDeletedLikeFlag(m.isSwiped)) return true;
+        const extra = m.extra && typeof m.extra === "object" ? m.extra : null;
+        if (extra) {
+            if (isDeletedLikeFlag(extra.deleted) || isDeletedLikeFlag(extra.is_deleted) || isDeletedLikeFlag(extra.isDeleted)) return true;
+            if (isDeletedLikeFlag(extra.hidden) || isDeletedLikeFlag(extra.is_hidden) || isDeletedLikeFlag(extra.isHidden)) return true;
+        }
+        return false;
+    } catch (_) {
+        return false;
+    }
+}
+
+function isInactiveDomMessage(m) {
+    try {
+        if (!m) return true;
+        if (m.hidden === true) return true;
+        if (m.getAttribute?.("hidden") != null) return true;
+        const cls = String(m.className || "").toLowerCase();
+        if (/(swipe|swiped|deleted|is_deleted|is-hidden|is_hidden|mes_hide|mes_hidden|mes_removed|mes_deleted)/i.test(cls)) return true;
+        if (isDeletedLikeFlag(m.getAttribute?.("data-deleted")) || isDeletedLikeFlag(m.getAttribute?.("data-hidden"))) return true;
+        return false;
+    } catch (_) {
+        return false;
+    }
+}
+
 async function tryImportChatArray() {
     const candidates = [
         "/script.js",
@@ -78,6 +115,7 @@ function readDomMessages(maxMessages) {
         const msgs = Array.from(chatEl.querySelectorAll(".mes")).slice(-1 * max);
         const out = [];
         for (const m of msgs) {
+            if (isInactiveDomMessage(m)) continue;
             const isUser =
                 m.classList?.contains("is_user") ||
                 m.getAttribute?.("is_user") === "true" ||
@@ -112,6 +150,7 @@ function readArrayMessages(arr, maxMessages) {
     const slice = Array.isArray(arr) ? arr.slice(-1 * max) : [];
     const out = [];
     for (const m of slice) {
+        if (isInactiveArrayMessage(m)) continue;
         const isUser = normIsUser(m?.is_user ?? m?.isUser ?? m?.role === "user");
         const name = normName(m?.name ?? m?.ch_name ?? m?.speaker ?? (isUser ? "You" : "Story"), isUser);
         const text = String(m?.mes ?? m?.message ?? m?.content ?? m?.text ?? "").trim();

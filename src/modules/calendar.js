@@ -514,7 +514,7 @@ export function initCalendar() {
   });
 
   $w.on("click.uieCal", "#cal-close-btn", function(e) {
-    e.preventDefault(); e.stopPropagation();
+    e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
     $w.fadeOut(200);
   });
 
@@ -550,11 +550,12 @@ export function initCalendar() {
   });
 
   $w.on("click.uieCal", "#cal-rp-modal-close", function (e) {
-    e.preventDefault(); e.stopPropagation();
+    e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
     $("#cal-rp-modal").hide();
   });
 
   $w.on("click.uieCal", "#cal-rp-modal", function (e) {
+    e.stopPropagation(); e.stopImmediatePropagation();
     if ($(e.target).closest("#cal-rp-card").length) return;
     $("#cal-rp-modal").hide();
   });
@@ -645,7 +646,13 @@ export function initCalendar() {
   });
 
   $w.on("click.uieCal", "#cal-modal-close", function(e){
-    e.preventDefault(); e.stopPropagation();
+    e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
+    $("#cal-modal").hide();
+  });
+
+  $w.on("click.uieCal", "#cal-modal", function(e){
+    e.stopPropagation(); e.stopImmediatePropagation();
+    if ($(e.target).closest("#cal-modal-card").length) return;
     $("#cal-modal").hide();
   });
 

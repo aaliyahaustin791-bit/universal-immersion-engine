@@ -242,13 +242,14 @@ function initReverseSync() {
     reverseSyncInt = setInterval(() => {
         const s = getSettings();
         if (s?.realityEngine?.enabled !== true) return;
+        if (document.hidden) return;
         if (stInput.value !== lastVal) {
             lastVal = stInput.value;
             if (document.activeElement !== reInput) {
                 reInput.value = stInput.value;
             }
         }
-    }, 400);
+    }, 1200);
 }
 
 // D. The Wand Proxy

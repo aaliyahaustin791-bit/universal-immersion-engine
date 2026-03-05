@@ -479,8 +479,7 @@ function createCustomActivity() {
 
 export function initActivities() {
     const $win = $("#uie-activities-window");
-    // Force hide on init
-    $win.hide();
+    // Do not force-hide here; this function is called when opening the window.
 
     // 1. Navigation
     $("body").off("click", ".uie-nav-item").on("click", ".uie-nav-item", function() {

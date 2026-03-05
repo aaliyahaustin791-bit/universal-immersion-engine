@@ -1,4 +1,5 @@
 import { getSettings, saveSettings } from "../core.js";
+import { injectRpEvent } from "./rp_log.js";
 
 let deleteMode = false;
 let selected = new Set();
@@ -37,6 +38,17 @@ function pct(cur, max) {
   max = Number(max || 0);
   if (max <= 0) return 0;
   return Math.max(0, Math.min(100, (cur / max) * 100));
+}
+
+export function normalizeLifeTracker(raw = {}) {
+  const name = String(raw?.name || "Tracker").trim().slice(0, 60) || "Tracker";
+  const max = Math.max(1, Number.isFinite(Number(raw?.max)) ? Number(raw.max) : 100);
+  const currentRaw = Number.isFinite(Number(raw?.current)) ? Number(raw.current) : 0;
+  const current = clamp(currentRaw, -999999, 999999);
+  const colorRaw = String(raw?.color || "").trim();
+  const color = /^#[0-9a-fA-F]{6}$/.test(colorRaw) ? colorRaw : "#89b4fa";
+  const notes = String(raw?.notes || "").slice(0, 800);
+  return { name, current, max, color, notes };
 }
 
 /** ✅ Portal modals to <body> so they overlay the shell (not behind / clipped) */
@@ -179,16 +191,18 @@ function createTrackerFromModal() {
   if (!s) return;
   ensureLife(s);
 
-  const name = String($("#life-create-name").val() || "Tracker").slice(0, 60);
-  const color = String($("#life-create-color").val() || "#89b4fa");
-  const cur = clamp($("#life-create-current").val(), -999999, 999999);
-  const max = clamp($("#life-create-max").val(), 0, 999999);
-  const notes = String($("#life-create-notes").val() || "").slice(0, 800);
+  const normalized = normalizeLifeTracker({
+    name: $("#life-create-name").val(),
+    color: $("#life-create-color").val(),
+    current: $("#life-create-current").val(),
+    max: $("#life-create-max").val(),
+    notes: $("#life-create-notes").val(),
+  });
 
   if (editingIndex >= 0 && s.life.trackers[editingIndex]) {
-      s.life.trackers[editingIndex] = { name, color, current: cur, max, notes };
+      s.life.trackers[editingIndex] = normalized;
   } else {
-      s.life.trackers.push({ name, color, current: cur, max, notes });
+      s.life.trackers.push(normalized);
   }
   
   saveSettings(s);
@@ -242,7 +256,30 @@ function deleteSelected() {
   saveSafe(s);
   toggleDeleteMode(false);
   $(document).trigger("uie:updateVitals");
-  injectRpEvent(`[System: Deleted ${idxs.length} Life Tracker(s).]`);
+  try { injectRpEvent(`[System: Deleted ${idxs.length} Life Tracker(s).]`); } catch (_) {}
+}
+
+function openEdit(idx) {
+  const s = getSettings();
+  if (!s) return;
+  ensureLife(s);
+  if (!Number.isFinite(Number(idx))) return;
+  const i = Number(idx);
+  const t = s.life.trackers[i];
+  if (!t) return;
+
+  const normalized = normalizeLifeTracker(t);
+  editingIndex = i;
+  portalModalsToBody();
+
+  $("#life-edit-title").text(`Edit Tracker: ${normalized.name}`);
+  $("#life-edit-name").val(normalized.name);
+  $("#life-edit-color").val(normalized.color);
+  $("#life-edit-current").val(Number(normalized.current));
+  $("#life-edit-max").val(Number(normalized.max));
+  $("#life-edit-notes").val(normalized.notes);
+
+  $("body > #life-modal-edit, #life-modal-edit").first().css("display", "flex");
 }
 
 /* avoid rare save failures */
@@ -384,13 +421,14 @@ export function init() {
         const s = getSettings();
         if (!s || editingIndex < 0 || !s.life.trackers[editingIndex]) return;
         
-        const name = String($("#life-edit-name").val() || "Tracker").slice(0, 60);
-        const color = String($("#life-edit-color").val() || "#89b4fa");
-        const cur = clamp($("#life-edit-current").val(), -999999, 999999);
-        const max = clamp($("#life-edit-max").val(), 0, 999999);
-        const notes = String($("#life-edit-notes").val() || "").slice(0, 800);
-        
-        s.life.trackers[editingIndex] = { name, color, current: cur, max, notes };
+        const normalized = normalizeLifeTracker({
+          name: $("#life-edit-name").val(),
+          color: $("#life-edit-color").val(),
+          current: $("#life-edit-current").val(),
+          max: $("#life-edit-max").val(),
+          notes: $("#life-edit-notes").val(),
+        });
+        s.life.trackers[editingIndex] = normalized;
         saveSettings(s);
         
         $("#life-modal-edit").hide();

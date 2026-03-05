@@ -1,7 +1,8 @@
-import { getSettings, updateLayout } from "./core.js";
+﻿import { getSettings, updateLayout } from "./core.js";
 import { fetchTemplateHtml } from "./templateFetch.js";
 import { initTurboUi } from "./apiClient.js";
 import { initImageUi } from "./imageGen.js";
+import { initBackups } from "./backup.js";
 
 const baseUrl = (() => {
     try {
@@ -10,6 +11,15 @@ const baseUrl = (() => {
     } catch (_) {}
     return "/scripts/extensions/third-party/universal-immersion-engine/";
 })();
+
+let i18nModulePromise = null;
+async function applyI18nBatch(root = document) {
+    try {
+        if (!i18nModulePromise) i18nModulePromise = import("./i18n.js");
+        const m = await i18nModulePromise;
+        m.applyI18n?.(root || document);
+    } catch (_) {}
+}
 
 export async function loadTemplates() {
     // Manually inject launcher to ensure it exists (bypassing fetch failure risks)
@@ -80,11 +90,13 @@ export async function loadTemplates() {
             return;
         }
         $("body").append(html);
-        try { (await import("./i18n.js")).applyI18n?.(document); } catch (_) {}
     }
 
+    try { setTimeout(() => { void applyI18nBatch(document); }, 0); } catch (_) {}
+
     const optional = ['phone', 'calendar', 'debug', 'journal', 'social', 'diary', 'shop', 'map', 'party', 'databank', 'battle', 'chatbox', 'launcher_options', 'sprites', 'activities', 'stats', 'settings_window'];
-    Promise.allSettled(
+    setTimeout(() => {
+        Promise.allSettled(
         optional.map(async (f) => {
             const url = `${baseUrl}src/templates/${f}.html?v=${ts}`;
             const html = await fetchTemplateHtml(url);
@@ -97,7 +109,6 @@ export async function loadTemplates() {
             } else {
                  $("body").append(html);
             }
-            try { (await import("./i18n.js")).applyI18n?.(document); } catch (_) {}
             return { f, url };
         })
     ).then((results) => {
@@ -106,7 +117,9 @@ export async function loadTemplates() {
             .filter((x) => x.r.status === "rejected")
             .map((x) => ({ file: x.f, error: x.r.reason }));
         if (failed.length) console.error("[UIE] Template load failures:", failed, { baseUrl });
-    });
+        try { setTimeout(() => { void applyI18nBatch(document); }, 0); } catch (_) {}
+        });
+    }, 700);
 }
 
 export function patchToastr() {
@@ -139,20 +152,29 @@ export function patchToastr() {
 
 export function injectSettingsUI() {
     let tries = 0;
+    const settingsTargetSelector = [
+        "#extensions_settings",
+        "#extensions_settings_panel",
+        "#extensions-settings-container",
+        "#extensions_settings2",
+        "#extensions-settings",
+        "#extensionsSettings",
+        "#extensions_settings_content",
+        ".extensions_settings",
+        "#extensions-settings-content"
+    ].join(", ");
+
+    const resolveSettingsTarget = () => {
+        try {
+            return $(settingsTargetSelector);
+        } catch (_) {
+            return $();
+        }
+    };
 
     const dedupeSettingsBlocks = () => {
         try {
-            const target = $([
-                "#extensions_settings",
-                "#extensions_settings_panel",
-                "#extensions-settings-container",
-                "#extensions_settings2",
-                "#extensions-settings",
-                "#extensionsSettings",
-                "#extensions_settings_content",
-                ".extensions_settings",
-                "#extensions-settings-content"
-            ].join(", "));
+            const target = resolveSettingsTarget();
 
             const blocks = $(".uie-settings-block");
             if (!blocks.length) return;
@@ -187,17 +209,7 @@ export function injectSettingsUI() {
     const inject = async () => {
         tries++;
 
-        let target = $([
-            "#extensions_settings",
-            "#extensions_settings_panel",
-            "#extensions-settings-container",
-            "#extensions_settings2",
-            "#extensions-settings",
-            "#extensionsSettings",
-            "#extensions_settings_content",
-            ".extensions_settings",
-            "#extensions-settings-content"
-        ].join(", "));
+        let target = resolveSettingsTarget();
 
         if (!target.length) {
             try {
@@ -245,6 +257,7 @@ export function injectSettingsUI() {
                 blocks.not(keep).remove();
                 try { initTurboUi(); } catch (_) {}
                 try { initImageUi(); } catch (_) {}
+                try { initBackups(); } catch (_) {}
                 try { (await import("./i18n.js")).applyI18n?.(document); } catch (_) {}
                 return;
             }
@@ -299,12 +312,11 @@ export function injectSettingsUI() {
                 target.append($block);
                 initTurboUi();
                 initImageUi();
+                initBackups();
                 try { (await import("./i18n.js")).applyI18n?.(document); } catch (_) {}
             } catch (e) {
                 try { console.error("[UIE] Failed to inject settings drawer", e); } catch (_) {}
             }
-        } else {
-            setTimeout(inject, 750);
         }
     };
     inject();
@@ -324,19 +336,47 @@ export function injectSettingsUI() {
                 }, 350);
             };
 
-            const obs = new MutationObserver(() => {
+            const isRelevantMutation = (mutations) => {
                 try {
+                    for (const m of mutations || []) {
+                        const nodes = [];
+                        try {
+                            if (m?.addedNodes?.length) nodes.push(...m.addedNodes);
+                            if (m?.removedNodes?.length) nodes.push(...m.removedNodes);
+                        } catch (_) {}
+
+                        for (const n of nodes) {
+                            if (!n || n.nodeType !== 1) continue;
+                            const el = n;
+                            const id = String(el.id || "").toLowerCase();
+                            const cls = String(el.className || "").toLowerCase();
+                            if (id === "uie-settings-block" || id.includes("extensions") || id.includes("settings")) return true;
+                            if (cls.includes("uie-settings-block") || cls.includes("extensions") || cls.includes("settings")) return true;
+                            if (typeof el.querySelector === "function") {
+                                if (el.querySelector("#uie-settings-block, .uie-settings-block")) return true;
+                            }
+                        }
+                    }
+                } catch (_) {}
+                return false;
+            };
+
+            const obs = new MutationObserver((mutations) => {
+                try {
+                    if (!isRelevantMutation(mutations)) return;
                     dedupeSettingsBlocks();
                     if ($("#uie-settings-block").length === 0) scheduleReinject();
                 } catch (_) {}
             });
-            obs.observe(document.body, { childList: true, subtree: true });
+
+            const target = resolveSettingsTarget();
+            const root = (target && target.length) ? target.get(0) : document.body;
+            obs.observe(root, { childList: true, subtree: root !== document.body });
             window.UIE_settingsDrawerObserver = obs;
         }
     } catch (_) {}
 
     // Add Drawer Listener - Use specific class to avoid double-binding if ST already handles general drawers
-    // Bind to BODY to catch events that might bubble up, but use stopImmediatePropagation to claim them
     $("body").off("click.uieDrawer").on("click.uieDrawer", ".uie-settings-block .inline-drawer-toggle", function(e) {
         e.preventDefault();
         e.stopPropagation();
@@ -416,3 +456,4 @@ try {
         };
     }
 } catch (_) {}
+

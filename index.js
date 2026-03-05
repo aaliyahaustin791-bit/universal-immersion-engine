@@ -1,4 +1,4 @@
-const EXT_ID = "universal-immersion-engine";
+﻿const EXT_ID = "universal-immersion-engine";
 const basePathFallback = `scripts/extensions/third-party/${EXT_ID}`;
 const baseUrl = (() => {
     try {
@@ -181,8 +181,6 @@ jQuery(async () => {
             throw e;
         }
 
-        await safeImport(`./src/modules/i18n.js?v=${uieBuildV}`, "initI18n", false);
-        await safeImport(`./src/modules/backup.js?v=${uieBuildV}`, "initBackups", false);
         try {
             const ok = $("#uie-inventory-window").length > 0;
             if (!ok) {
@@ -191,37 +189,57 @@ jQuery(async () => {
                 throw new Error("Inventory template missing after loadTemplates()");
             }
         } catch (_) {}
-        Startup.injectSettingsUI();
+        setTimeout(() => { try { Startup.injectSettingsUI(); } catch (_) {} }, 1200);
 
-        // 4. Load Features (Modules)
-        // These modules should self-initialize their event listeners
+        // 4. Load only critical modules synchronously for fast first paint.
+        // Non-critical modules are deferred in the background.
         await safeImport(`./src/modules/dragging.js?v=${uieBuildV}`, "initDragging", true);
         await safeImport(`./src/modules/interaction.js?v=${uieBuildV}`, "initInteractions", true);
-        await safeImport(`./src/modules/navigation.js?v=${uieBuildV}`, "initNavigation", false);
-        await safeImport(`./src/modules/prompt_injection.js?v=${uieBuildV}`, "initPromptInjection", false);
-        await safeImport(`./src/modules/stateTracker.js?v=${uieBuildV}`, "initAutoScanning", false);
-        await safeImport(`./src/modules/features/generation.js?v=${uieBuildV}`, "init", false);
         await safeImport(`./src/modules/inventory.js?v=${uieBuildV}`, "initInventory", true);
-        await safeImport(`./src/modules/features/activities.js?v=${uieBuildV}`, "initActivities", false);
-        await safeImport(`./src/modules/diary.js?v=${uieBuildV}`, "initDiary", false);
-        await safeImport(`./src/modules/diagnostics.js?v=${uieBuildV}`, "initDiagnostics", false);
-        await safeImport(`./src/modules/calendar.js?v=${uieBuildV}`, "initCalendar", false);
-        await safeImport(`./src/modules/databank.js?v=${uieBuildV}`, "initDatabank", false);
-        await safeImport(`./src/modules/journal.js?v=${uieBuildV}`, "initJournal", false);
-        // Do not init War Room at startup; only init when the user explicitly opens it.
-        await safeImport(`./src/modules/map.js?v=${uieBuildV}`, "initMap", false);
-        await safeImport(`./src/modules/party.js?v=${uieBuildV}`, "initParty", false);
-        await safeImport(`./src/modules/social.js?v=${uieBuildV}`, "initSocial", false);
-        // Force reload world.js to apply UI fixes
-        await safeImport(`./src/modules/world.js?v=${uieBuildV}`, "initWorld", false);
-        await safeImport(`./src/modules/chatbox.js?v=${uieBuildV}`, "initChatbox", false);
-        await safeImport(`./src/modules/sprites.js?v=${uieBuildV}`, "initSprites", false);
-        await safeImport(`./src/modules/features/stats.js?v=${uieBuildV}`, "initStats", false);
 
-        // Phone placeholder
-        await safeImport(`./src/modules/phone.js?v=${uieBuildV}`, "initPhone", false);
+        const deferredModules = [
+            ["./src/modules/i18n.js", "initI18n"],
+            ["./src/modules/backup.js", "initBackups"],
+            ["./src/modules/navigation.js", "initNavigation"],
+            ["./src/modules/prompt_injection.js", "initPromptInjection"],
+            ["./src/modules/stateTracker.js", "initAutoScanning"],
+            ["./src/modules/features/generation.js", "init"],
+            ["./src/modules/features/activities.js", "initActivities"],
+            ["./src/modules/diary.js", "initDiary"],
+            ["./src/modules/diagnostics.js", "initDiagnostics"],
+            ["./src/modules/calendar.js", "initCalendar"],
+            ["./src/modules/databank.js", "initDatabank"],
+            ["./src/modules/journal.js", "initJournal"],
+            // Do not init War Room at startup; only init when the user explicitly opens it.
+            ["./src/modules/map.js", "initMap"],
+            ["./src/modules/party.js", "initParty"],
+            ["./src/modules/social.js", "initSocial"],
+            ["./src/modules/world.js", "initWorld"],
+            ["./src/modules/chatbox.js", "initChatbox"],
+            ["./src/modules/sprites.js", "initSprites"],
+            ["./src/modules/features/stats.js", "initStats"],
+            ["./src/modules/phone.js", "initPhone"],
+        ];
 
-        // 5. Finalize
+        const runDeferredModules = async () => {
+            for (const [modPath, initFn] of deferredModules) {
+                await safeImport(`${modPath}?v=${uieBuildV}`, initFn, false);
+                await sleep(80);
+            }
+            try { Core.updateLayout(); } catch (_) {}
+        };
+
+        try {
+            if (typeof window.requestIdleCallback === "function") {
+                window.requestIdleCallback(() => { void runDeferredModules(); }, { timeout: 4000 });
+            } else {
+                setTimeout(() => { void runDeferredModules(); }, 1200);
+            }
+        } catch (_) {
+            setTimeout(() => { void runDeferredModules(); }, 1200);
+        }
+
+        // 5. Finalize (critical-ready)
         Core.updateLayout();
         try { $("#uie-battle-window").hide().css("display", "none"); } catch (_) {}
         console.log("[UIE] Ready.");
@@ -231,3 +249,4 @@ jQuery(async () => {
         markInitError("critical", e);
     }
 });
+

@@ -931,6 +931,142 @@ $("body").off("click.uieCurrencySave").on("click.uieCurrencySave", "#uie-currenc
     try { window.toastr?.success?.("Economy settings saved.", "UIE"); } catch (_) {}
 });
 
+function ensureRpgSettingsState(s) {
+    if (!s.character || typeof s.character !== "object") s.character = {};
+    if (!s.character.stats || typeof s.character.stats !== "object") {
+        s.character.stats = { str: 10, dex: 10, con: 10, int: 10, wis: 10, cha: 10, per: 10, luk: 10 };
+    }
+    if (!Array.isArray(s.character.savedClasses)) s.character.savedClasses = [];
+    if (!s.inventory || typeof s.inventory !== "object") s.inventory = {};
+    if (!Array.isArray(s.inventory.skills)) s.inventory.skills = [];
+    if (!Array.isArray(s.inventory.assets)) s.inventory.assets = [];
+    if (!Array.isArray(s.inventory.life)) s.inventory.life = [];
+}
+
+function refreshSavedClassDropdown() {
+    try {
+        const s = getSettings();
+        ensureRpgSettingsState(s);
+        const sel = document.getElementById("uie-class-saved");
+        if (!sel) return;
+        const classes = Array.isArray(s.character.savedClasses) ? s.character.savedClasses : [];
+        sel.innerHTML = `<option value="">—</option>`;
+        classes.forEach((c, idx) => {
+            const label = String(c?.name || c?.className || `Class ${idx + 1}`);
+            const opt = document.createElement("option");
+            opt.value = String(idx);
+            opt.textContent = label;
+            sel.appendChild(opt);
+        });
+    } catch (_) {}
+}
+
+function syncRpgSettingsInputs() {
+    try {
+        const s = getSettings();
+        ensureRpgSettingsState(s);
+        const nm = document.getElementById("uie-rpg-name");
+        const cls = document.getElementById("uie-rpg-class");
+        const lvl = document.getElementById("uie-rpg-level");
+        const sync = document.getElementById("uie-rpg-sync-persona");
+        const mode = document.getElementById("uie-rpg-mode");
+        if (nm) nm.value = String(s.character.name || "User");
+        if (cls) cls.value = String(s.character.className || "");
+        if (lvl) lvl.value = String(Number(s.character.level || 1) || 1);
+        if (sync) sync.checked = s.character.syncPersona === true;
+        if (mode) mode.value = String(s.character.mode || "adventurer");
+        const sym = document.getElementById("uie-set-currency-sym");
+        const rate = document.getElementById("uie-set-currency-rate");
+        if (sym) sym.value = String(s.currencySymbol || "G");
+        if (rate) rate.value = String(Number(s.currencyRate || 0) || 0);
+        refreshSavedClassDropdown();
+    } catch (_) {}
+}
+
+$("body")
+    .off("input.uieRpgSheet change.uieRpgSheet")
+    .on("input.uieRpgSheet change.uieRpgSheet", "#uie-rpg-name, #uie-rpg-class, #uie-rpg-level, #uie-rpg-sync-persona, #uie-rpg-mode", function(e) {
+        try { e.preventDefault(); e.stopPropagation(); } catch (_) {}
+        const s = getSettings();
+        ensureRpgSettingsState(s);
+        s.character.name = String($("#uie-rpg-name").val() || s.character.name || "User").trim() || "User";
+        s.character.className = String($("#uie-rpg-class").val() || s.character.className || "").trim();
+        const lv = Number($("#uie-rpg-level").val());
+        s.character.level = Number.isFinite(lv) && lv > 0 ? Math.floor(lv) : Number(s.character.level || 1) || 1;
+        s.character.syncPersona = $("#uie-rpg-sync-persona").is(":checked");
+        s.character.mode = String($("#uie-rpg-mode").val() || s.character.mode || "adventurer");
+        saveSettings();
+    })
+    .off("click.uieRpgClassSave")
+    .on("click.uieRpgClassSave", "#uie-class-save", function(e) {
+        try { e.preventDefault(); e.stopPropagation(); } catch (_) {}
+        const s = getSettings();
+        ensureRpgSettingsState(s);
+        const suggested = String(s.character.className || "").trim() || "Class";
+        const name = String(window.prompt("Save class as:", suggested) || "").trim();
+        if (!name) return;
+        const snapshot = {
+            name,
+            className: String(s.character.className || "").trim(),
+            level: Number(s.character.level || 1) || 1,
+            stats: JSON.parse(JSON.stringify(s.character.stats || {})),
+            skills: JSON.parse(JSON.stringify(s.inventory.skills || [])),
+            assets: JSON.parse(JSON.stringify(s.inventory.assets || [])),
+            life: JSON.parse(JSON.stringify(s.inventory.life || [])),
+            savedAt: Date.now()
+        };
+        const arr = Array.isArray(s.character.savedClasses) ? s.character.savedClasses : [];
+        const idx = arr.findIndex((x) => String(x?.name || "").toLowerCase() === name.toLowerCase());
+        if (idx >= 0) arr[idx] = snapshot;
+        else arr.push(snapshot);
+        s.character.savedClasses = arr.slice(0, 100);
+        saveSettings();
+        refreshSavedClassDropdown();
+        try { window.toastr?.success?.("Class saved.", "UIE"); } catch (_) {}
+    })
+    .off("click.uieRpgClassApply")
+    .on("click.uieRpgClassApply", "#uie-class-apply", function(e) {
+        try { e.preventDefault(); e.stopPropagation(); } catch (_) {}
+        const s = getSettings();
+        ensureRpgSettingsState(s);
+        const idx = Number($("#uie-class-saved").val());
+        if (!Number.isFinite(idx)) return;
+        const entry = s.character.savedClasses[idx];
+        if (!entry || typeof entry !== "object") return;
+        s.character.className = String(entry.className || s.character.className || "").trim();
+        s.character.level = Number(entry.level || s.character.level || 1) || 1;
+        if (entry.stats && typeof entry.stats === "object") s.character.stats = JSON.parse(JSON.stringify(entry.stats));
+        s.inventory.skills = Array.isArray(entry.skills) ? JSON.parse(JSON.stringify(entry.skills)) : [];
+        s.inventory.assets = Array.isArray(entry.assets) ? JSON.parse(JSON.stringify(entry.assets)) : [];
+        s.inventory.life = Array.isArray(entry.life) ? JSON.parse(JSON.stringify(entry.life)) : [];
+        saveSettings();
+        syncRpgSettingsInputs();
+        try { updateLayout(); } catch (_) {}
+        try { window.toastr?.success?.("Class applied.", "UIE"); } catch (_) {}
+    })
+    .off("click.uieRpgClassDelete")
+    .on("click.uieRpgClassDelete", "#uie-class-delete", function(e) {
+        try { e.preventDefault(); e.stopPropagation(); } catch (_) {}
+        const s = getSettings();
+        ensureRpgSettingsState(s);
+        const idx = Number($("#uie-class-saved").val());
+        if (!Number.isFinite(idx)) return;
+        if (!Array.isArray(s.character.savedClasses) || !s.character.savedClasses[idx]) return;
+        s.character.savedClasses.splice(idx, 1);
+        saveSettings();
+        refreshSavedClassDropdown();
+        try { window.toastr?.success?.("Class removed.", "UIE"); } catch (_) {}
+    })
+    .off("click.uieRpgTabSync")
+    .on("click.uieRpgTabSync", "#uie-sw-tabs .uie-set-tab", function() {
+        const tab = String($(this).data("tab") || "").trim();
+        if (tab === "rpg" || tab === "general") {
+            setTimeout(syncRpgSettingsInputs, 0);
+        }
+    });
+
+try { setTimeout(syncRpgSettingsInputs, 500); } catch (_) {}
+
 $("body")
     .off("change.uieCoreKill")
     .on("change.uieCoreKill", "#uie-setting-enable", function (e) {

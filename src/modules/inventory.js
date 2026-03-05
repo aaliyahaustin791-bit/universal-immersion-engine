@@ -1541,7 +1541,14 @@ export function initInventory() {
       const chat = await getChatTranscriptText({ maxMessages: 30, maxChars: 2600 });
 
       const persona = (() => { try { const ctx = getContext?.(); return String(ctx?.name1 || "You").trim() || "You"; } catch (_) { return "You"; } })();
-      const base = desc ? `User request: ${desc}\n\n` : "";
+      const priorityRules = `Rules (Priority Order):
+1) User request is HIGHEST PRIORITY. If provided, follow it exactly.
+2) Context is SUPPORTING ONLY. Use it to enrich details, not to override user request.
+3) Do not invent unrelated items/skills/assets.
+4) Return JSON only.`;
+      const base = desc
+        ? `User request (TOP PRIORITY): ${desc}\n`
+        : "User request (TOP PRIORITY): None provided.\n";
 
       // Determine if we use Staging Area
       const useStaging = ["item", "skill", "asset"].includes(kind);
@@ -1553,9 +1560,9 @@ export function initInventory() {
 
       let prompt = "";
       if (kind === "class") {
-          prompt = `${base}Return ONLY JSON: {"className":"","level":1,"stats":{"str":10,"dex":10,"con":10,"int":10,"wis":10,"cha":10,"per":10,"luk":10,"agi":10,"vit":10,"end":10,"spi":10},"skills":[{"name":"","description":""}],"assets":[{"name":"","description":""}],"items":[{"name":"","description":"","type":"","rarity":"common|uncommon|rare|epic|legendary","qty":1,"statusEffects":[""],"img":""}],"equipment":[{"slotId":"","name":"","type":"","rarity":"","statusEffects":[""],"img":""}],"statusEffects":[""],"trackers":[{"name":"","current":0,"max":100,"color":"#89b4fa","notes":""}]}\nRules:\n- If user requested a specific level, set it.\n- If not requested, use Current level.\n- Keep arrays short (<= 10 each). Always include at least 2-4 assets (class abilities/features) and 2-4 trackers (e.g. HP, MP, Stamina, Mana).\n- assets: class abilities, features, or resources (name + description).\n- trackers: life trackers for this class. Use colors like #ef4444 (red), #22c55e (green), #3b82f6 (blue).\nCurrent level: ${Number(s2.character?.level || 1)}\nPersona:${persona}\nContext:\n${chat}`;
+          prompt = `${base}\n${priorityRules}\nReturn ONLY JSON: {"className":"","level":1,"stats":{"str":10,"dex":10,"con":10,"int":10,"wis":10,"cha":10,"per":10,"luk":10,"agi":10,"vit":10,"end":10,"spi":10},"skills":[{"name":"","description":""}],"assets":[{"name":"","description":""}],"items":[{"name":"","description":"","type":"","rarity":"common|uncommon|rare|epic|legendary","qty":1,"statusEffects":[""],"img":""}],"equipment":[{"slotId":"","name":"","type":"","rarity":"","statusEffects":[""],"img":""}],"statusEffects":[""],"trackers":[{"name":"","current":0,"max":100,"color":"#89b4fa","notes":""}]}\nClass-specific rules:\n- If user requested a specific level, set it.\n- If not requested, use Current level.\n- Keep arrays short (<= 10 each). Always include at least 2-4 assets (class abilities/features) and 2-4 trackers (e.g. HP, MP, Stamina, Mana).\n- assets: class abilities, features, or resources (name + description).\n- trackers: life trackers for this class. Use colors like #ef4444 (red), #22c55e (green), #3b82f6 (blue).\nCurrent level: ${Number(s2.character?.level || 1)}\nPersona:${persona}\nContext (supporting only):\n${chat}`;
       } else if (kind === "status") {
-          prompt = `${base}Return ONLY JSON: {"statusEffects":[""]}\nRules:\n- 0-6 short strings\nPersona:${persona}\nContext:\n${chat}`;
+          prompt = `${base}\n${priorityRules}\nReturn ONLY JSON: {"statusEffects":[""]}\nRules:\n- 0-6 short strings\nPersona:${persona}\nContext (supporting only):\n${chat}`;
       } else {
           // Item / Skill / Asset
           const schema = kind === "skill"
@@ -1565,9 +1572,9 @@ export function initInventory() {
               : `{"name":"","description":"","type":"","rarity":"common|uncommon|rare|epic|legendary","qty":1,"statusEffects":[""],"img":""}`;
 
           if (isArrayReq) {
-              prompt = `${base}Return ONLY JSON Array of ${qty} items: [${schema}, ...]\nPersona:${persona}\nContext:\n${chat}`;
+              prompt = `${base}\n${priorityRules}\nReturn ONLY JSON Array of ${qty} items: [${schema}, ...]\nPersona:${persona}\nContext (supporting only):\n${chat}`;
           } else {
-              prompt = `${base}Return ONLY JSON: ${schema}\nPersona:${persona}\nContext:\n${chat}`;
+              prompt = `${base}\n${priorityRules}\nReturn ONLY JSON: ${schema}\nPersona:${persona}\nContext (supporting only):\n${chat}`;
           }
       }
 
@@ -1689,6 +1696,12 @@ export function initInventory() {
       // Update from inputs
       item.name = card.find(".uie-stage-name").val();
       item.description = card.find(".uie-stage-desc").val();
+      item._meta = {
+        ...(item._meta && typeof item._meta === "object" ? item._meta : {}),
+        source: "creation_station",
+        updatedAt: Date.now()
+      };
+      if (!item._meta.createdAt) item._meta.createdAt = Date.now();
 
       const s = getSettings();
       ensureModel(s);
@@ -1698,9 +1711,16 @@ export function initInventory() {
 
       if (item.kind === "skill") {
           if (!Array.isArray(s.inventory.skills)) s.inventory.skills = [];
+          const type = String(item.skillType || item.type || "active").trim().toLowerCase() === "passive" ? "passive" : "active";
+          item.type = type;
+          item.skillType = type;
+          if (!item.mods || typeof item.mods !== "object") item.mods = {};
+          if (!item.active || typeof item.active !== "object") item.active = null;
+          if (!item.passive || typeof item.passive !== "object") item.passive = null;
           s.inventory.skills.push(item);
       } else if (item.kind === "asset") {
           if (!Array.isArray(s.inventory.assets)) s.inventory.assets = [];
+          item.owned = item.owned !== false;
           s.inventory.assets.push(item);
       } else if (item.kind === "activity") {
           if (!s.activities) s.activities = {};

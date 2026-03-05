@@ -1,9 +1,11 @@
-
+﻿
 import { getSettings, saveSettings } from "./core.js";
 
 let bound = false;
 let activeSet = "";
 let category = "default";
+let spriteLayerWatchdog = null;
+let spriteLayerDeepScanAt = 0;
 
 // --- EXISTING CONFIG LOGIC (Preserved) ---
 const DEFAULT_KEYS = [
@@ -159,7 +161,7 @@ function renderList() {
             } else {
                 thumb.style.background = "rgba(0,0,0,0.25)";
                 thumb.style.opacity = "0.8";
-                thumb.textContent = "—";
+                thumb.textContent = "â€”";
             }
         }
 
@@ -302,7 +304,7 @@ export async function updateSpriteStage(text, charName, isInScene = true) {
         } else {
             stage.appendChild(spriteLayer);
         }
-        console.log(`[UIE] ✅ Created sprite layer for ${charName} inside reality-stage`);
+        console.log(`[UIE] âœ… Created sprite layer for ${charName} inside reality-stage`);
     }
 
     // Force sprite layer to be visible with multiple methods
@@ -495,7 +497,7 @@ export async function updateSpriteStage(text, charName, isInScene = true) {
                                 dataUrl = new URL(`/characters/${charName}/${matchingSprite.path}`, window.location.origin).href;
                             }
                         }
-                        console.log(`[UIE] ✅ Mirrored Character Expression sprite: ${matchingSprite.label} -> ${dataUrl}`);
+                        console.log(`[UIE] âœ… Mirrored Character Expression sprite: ${matchingSprite.label} -> ${dataUrl}`);
                     } else {
                         console.warn(`[UIE] No matching sprite found in Character Expressions API results for ${charName} with mood ${mood}`);
                     }
@@ -610,7 +612,7 @@ export async function updateSpriteStage(text, charName, isInScene = true) {
                             if (dataUrl && !dataUrl.startsWith("data:") && !dataUrl.startsWith("http")) {
                                 dataUrl = new URL(dataUrl, window.location.origin).href;
                             }
-                            console.log(`[UIE] ✅ Directly mirrored Character Expression sprite from expression-holder: ${dataUrl}`);
+                            console.log(`[UIE] âœ… Directly mirrored Character Expression sprite from expression-holder: ${dataUrl}`);
                         }
                     }
 
@@ -903,7 +905,7 @@ export async function updateSpriteStage(text, charName, isInScene = true) {
         }
 
         spriteLayer.appendChild(img);
-        console.log(`[UIE] ✅ Sprite element created and added to layer for ${charName}`);
+        console.log(`[UIE] âœ… Sprite element created and added to layer for ${charName}`);
         console.log(`[UIE] Layer parent: ${spriteLayer.parentNode?.id || 'none'}, display: ${window.getComputedStyle(spriteLayer).display}, visibility: ${window.getComputedStyle(spriteLayer).visibility}`);
         console.log(`[UIE] Stage display: ${stage ? window.getComputedStyle(stage).display : 'N/A'}, visibility: ${stage ? window.getComputedStyle(stage).visibility : 'N/A'}`);
         console.log(`[UIE] Sprite element added to DOM at ${img.offsetLeft},${img.offsetTop}, size: ${img.offsetWidth}x${img.offsetHeight}, waiting for image load...`);
@@ -1162,7 +1164,7 @@ export async function updateSpriteStage(text, charName, isInScene = true) {
             // Force a reflow to ensure rendering
             void this.offsetWidth;
 
-            console.log(`[UIE] ✅ Sprite loaded successfully: ${charName} (${this.src})`);
+            console.log(`[UIE] âœ… Sprite loaded successfully: ${charName} (${this.src})`);
             console.log(`[UIE] Sprite computed: display=${window.getComputedStyle(this).display}, visibility=${window.getComputedStyle(this).visibility}, opacity=${window.getComputedStyle(this).opacity}`);
             console.log(`[UIE] Sprite dimensions: ${this.naturalWidth}x${this.naturalHeight}, displayed: ${this.offsetWidth}x${this.offsetHeight}`);
             console.log(`[UIE] Sprite position: left=${this.style.left}, bottom=${this.style.bottom}, z-index=${window.getComputedStyle(this).zIndex}`);
@@ -1189,7 +1191,7 @@ export async function updateSpriteStage(text, charName, isInScene = true) {
             img.style.display = "block";
             img.style.visibility = "visible";
             img.style.opacity = "1";
-            console.log(`[UIE] ✅ Existing sprite element made visible for ${charName} (${img.naturalWidth}x${img.naturalHeight})`);
+            console.log(`[UIE] âœ… Existing sprite element made visible for ${charName} (${img.naturalWidth}x${img.naturalHeight})`);
         } else {
             console.log(`[UIE] Existing sprite element for ${charName} - image not loaded yet (complete: ${img.complete})`);
         }
@@ -1394,7 +1396,7 @@ export function initSprites() {
                         childList: true
                     });
 
-                    console.log("[UIE] ✅ Character Expressions mirror observer initialized (non-intrusive)");
+                    console.log("[UIE] âœ… Character Expressions mirror observer initialized (non-intrusive)");
                     return exprObserver;
                 }
                 return null;
@@ -1438,41 +1440,54 @@ export function initSprites() {
     if ($w.length) bindWindow($w[0]);
 
     console.log("[UIE] Living Sprite System Initialized");
-
-    // Also set up a periodic check to ensure sprites are visible (in case they get hidden)
-    setInterval(() => {
-        try {
-            const layer = document.getElementById("re-sprites-layer");
-            const stage = document.getElementById("reality-stage");
-            if (layer && stage) {
-                const layerStyle = window.getComputedStyle(layer);
+    // Periodic health check: keep work cheap and only deep-scan occasionally.
+    if (!spriteLayerWatchdog) {
+        spriteLayerWatchdog = setInterval(() => {
+            try {
+                if (document.hidden) return;
+                const stage = document.getElementById("reality-stage");
+                if (!stage) return;
                 const stageStyle = window.getComputedStyle(stage);
+                if (stageStyle.display === "none" || stageStyle.visibility === "hidden") return;
 
-                // If layer is hidden but stage is visible, force layer visible
-                if (stageStyle.display !== "none" && (layerStyle.display === "none" || layerStyle.visibility === "hidden")) {
-                    console.log("[UIE] Sprite layer was hidden, forcing visibility");
+                const layer = document.getElementById("re-sprites-layer");
+                if (!layer) return;
+
+                const layerStyle = window.getComputedStyle(layer);
+                const layerHidden =
+                    layerStyle.display === "none" ||
+                    layerStyle.visibility === "hidden" ||
+                    Number(layerStyle.opacity || "1") === 0;
+
+                if (layerHidden) {
                     layer.style.display = "block";
                     layer.style.visibility = "visible";
                     layer.style.opacity = "1";
                 }
 
-                // Ensure all sprites in layer are visible
+                const now = Date.now();
+                const shouldDeepScan = layerHidden || (now - spriteLayerDeepScanAt >= 15000);
+                if (!shouldDeepScan) return;
+                spriteLayerDeepScanAt = now;
+
                 const sprites = layer.querySelectorAll(".re-sprite, [id^='re-sprite-']");
-                sprites.forEach(sprite => {
-                    if (sprite.complete && sprite.naturalHeight > 0) {
-                        const spriteStyle = window.getComputedStyle(sprite);
-                        if (spriteStyle.display === "none" || spriteStyle.visibility === "hidden") {
-                            sprite.style.display = "block";
-                            sprite.style.visibility = "visible";
-                            sprite.style.opacity = "1";
-                        }
-                    }
-                });
+                for (const sprite of sprites) {
+                    if (!sprite || sprite.nodeType !== 1) continue;
+                    if (!(sprite.complete && sprite.naturalHeight > 0)) continue;
+                    const inlineHidden =
+                        sprite.style.display === "none" ||
+                        sprite.style.visibility === "hidden" ||
+                        sprite.style.opacity === "0";
+                    if (!inlineHidden) continue;
+                    sprite.style.display = "block";
+                    sprite.style.visibility = "visible";
+                    sprite.style.opacity = "1";
+                }
+            } catch (_) {
+                // Silent fail for periodic check
             }
-        } catch (e) {
-            // Silent fail for periodic check
-        }
-    }, 2000); // Check every 2 seconds
+        }, 3000);
+    }
 }
 
 function bindWindow(win) {
@@ -1607,3 +1622,4 @@ export function openSprites() {
         }
     }
 }
+

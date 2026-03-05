@@ -3,8 +3,10 @@ import { getContext } from "/scripts/extensions.js";
 import { generateContent } from "./apiClient.js";
 import { notify } from "./notifications.js";
 import { normalizeStatusList, normalizeStatusEffect, statusKey } from "./statusFx.js";
+import { injectRpEvent } from "./features/rp_log.js";
 import { getChatTranscriptText, getRecentChatSnippet } from "./chatLog.js";
 import { safeJsonParseObject } from "./jsonUtil.js";
+import { addDatabankEntryWithDedupe } from "./databankModel.js";
 
 function defaultEventTypes() {
     return {
@@ -51,6 +53,12 @@ function initDomAutoScanningFallback() {
 
         if (t) clearTimeout(t);
         t = setTimeout(() => {
+            try {
+                const s = getSettings();
+                const min = Math.max(1000, Number(s?.generation?.autoScanMinIntervalMs || 8000));
+                const now = Date.now();
+                if (window.UIE_scanEverythingGate && (now - Number(window.UIE_scanEverythingGate.lastAt || 0) < min)) return;
+            } catch (_) {}
             try { window.UIE_autoScanLastRunAt = Date.now(); } catch (_) {}
             scanEverything({}).catch((e) => {
                 try { window.UIE_autoScanLastError = String(e?.message || e || ""); } catch (_) {}
@@ -313,6 +321,17 @@ function readChatTailFingerprint() {
     }
 }
 
+function readChatScanSignature() {
+    try {
+        const sig = readChatSig();
+        const count = Number(sig?.count || 0) || 0;
+        const tailFp = String(readChatTailFingerprint() || "");
+        return `${count}|${tailFp}`;
+    } catch (_) {
+        return "";
+    }
+}
+
 function snapshotScanTouchedState(s) {
     const keys = [
         "worldState",
@@ -433,6 +452,50 @@ function clamp(n, min, max) {
     return Math.max(min, Math.min(max, n));
 }
 
+function firstFiniteNumber(...vals) {
+    for (const v of vals) {
+        const n = Number(v);
+        if (Number.isFinite(n)) return n;
+    }
+    return null;
+}
+
+function normKey(v) {
+    return String(v || "").trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function normalizeAssetCategory(v) {
+    const raw = String(v || "").trim().toLowerCase();
+    if (!raw) return "other";
+    if (/(property|real estate|house|home|apartment|estate|land|building|deed)/i.test(raw)) return "property";
+    if (/(vehicle|car|bike|truck|van|motorcycle|automobile)/i.test(raw)) return "vehicle";
+    if (/(ship|boat|vessel|yacht|submarine|airship)/i.test(raw)) return "ship";
+    if (/(business|company|shop|store|firm|enterprise|corporation)/i.test(raw)) return "business";
+    return raw.slice(0, 80);
+}
+
+function normalizeSkillType(v) {
+    return String(v || "").trim().toLowerCase() === "passive" ? "passive" : "active";
+}
+
+function sanitizeMods(mods) {
+    const out = {};
+    if (!mods || typeof mods !== "object") return out;
+    for (const [k, v] of Object.entries(mods)) {
+        const n = Number(v);
+        if (!Number.isFinite(n)) continue;
+        out[String(k || "").trim().slice(0, 32)] = n;
+    }
+    return out;
+}
+
+function hasExplicitOwnershipEvidence(text) {
+    const t = String(text || "").toLowerCase();
+    if (!t) return false;
+    return /(user|you|player|party).{0,80}(found|finds|picked up|pick up|bought|buy|purchased|got|gains|gained|acquired|obtained|received|receives|earned|earns|crafted|crafts|created|creates|learned|learns|owns|owned|obtains|looted|loot)/i.test(t) ||
+        /(found|picked up|bought|purchased|gained|acquired|obtained|received|earned|crafted|created|learned|owns|owned|looted)/i.test(t);
+}
+
 function findLifeTracker(s, name) {
     const n = String(name || "").trim().toLowerCase();
     if (!n) return null;
@@ -444,18 +507,32 @@ function findLifeTracker(s, name) {
 }
 
 function ensureSocial(s) {
-    if (!s.social || typeof s.social !== "object") s.social = { friends: [], romance: [], family: [], rivals: [] };
-    for (const k of ["friends", "romance", "family", "rivals"]) {
+    if (!s.social || typeof s.social !== "object") s.social = { friends: [], associates: [], romance: [], family: [], rivals: [] };
+    for (const k of ["friends", "associates", "romance", "family", "rivals"]) {
         if (!Array.isArray(s.social[k])) s.social[k] = [];
     }
     if (!s.socialMeta || typeof s.socialMeta !== "object") s.socialMeta = { autoScan: false, deletedNames: [] };
     if (!Array.isArray(s.socialMeta.deletedNames)) s.socialMeta.deletedNames = [];
 }
 
+function ensureJournal(s) {
+    if (!s.journal || typeof s.journal !== "object") s.journal = { active: [], pending: [], abandoned: [], completed: [], codex: [] };
+    for (const k of ["active", "pending", "abandoned", "completed", "codex"]) {
+        if (!Array.isArray(s.journal[k])) s.journal[k] = [];
+    }
+}
+
 function ensureParty(s) {
     if (!s.party) s.party = { members: [], sharedItems: [], relationships: {}, partyTactics: {}, formation: { lanes: { front:[], mid:[], back:[] } } };
     if (!Array.isArray(s.party.members)) s.party.members = [];
     if (!Array.isArray(s.party.sharedItems)) s.party.sharedItems = [];
+    if (!s.party.relationships || typeof s.party.relationships !== "object") s.party.relationships = {};
+    if (!s.party.partyTactics || typeof s.party.partyTactics !== "object") s.party.partyTactics = {};
+    if (!s.party.formation || typeof s.party.formation !== "object") s.party.formation = { lanes: { front: [], mid: [], back: [] } };
+    if (!s.party.formation.lanes || typeof s.party.formation.lanes !== "object") s.party.formation.lanes = { front: [], mid: [], back: [] };
+    for (const lane of ["front", "mid", "back"]) {
+        if (!Array.isArray(s.party.formation.lanes[lane])) s.party.formation.lanes[lane] = [];
+    }
 }
 
 function createMember(name) {
@@ -467,12 +544,318 @@ function createMember(name) {
         vitals: { hp: 100, maxHp: 100, mp: 50, maxMp: 50, ap: 10, maxAp: 10 },
         progression: { level: 1, xp: 0, skillPoints: 0, perkPoints: 0 },
         equipment: {},
+        trackers: [],
         partyRole: "DPS",
         roles: ["Character"],
         statusEffects: [],
         active: true,
         tactics: { preset: "Balanced", focus: "auto" }
     };
+}
+
+function nextPartyTrackerId() {
+    return `ptrk_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function normalizePartyTrackerColor(v) {
+    const raw = String(v || "").trim();
+    return /^#[0-9a-fA-F]{6}$/.test(raw) ? raw : "#89b4fa";
+}
+
+function normalizePartyTracker(raw = {}) {
+    const id = String(raw?.id || nextPartyTrackerId()).trim() || nextPartyTrackerId();
+    const name = String(raw?.name || "Tracker").trim().slice(0, 60) || "Tracker";
+    const max = Math.max(1, Number.isFinite(Number(raw?.max)) ? Number(raw.max) : 100);
+    const color = normalizePartyTrackerColor(raw?.color);
+    const notes = String(raw?.notes || "").slice(0, 800);
+    const current = clamp(Number.isFinite(Number(raw?.current)) ? Number(raw.current) : 0, 0, max);
+    return { id, name, current, max, color, notes };
+}
+
+function findPartyMemberByName(s, name) {
+    const key = normKey(name);
+    if (!key) return null;
+    const list = Array.isArray(s?.party?.members) ? s.party.members : [];
+    for (const m of list) {
+        if (normKey(m?.identity?.name || m?.name) === key) return m;
+    }
+    return null;
+}
+
+function ensurePartyMemberState(m) {
+    if (!m || typeof m !== "object") return;
+    if (!m.identity || typeof m.identity !== "object") m.identity = { name: "Member", class: "Adventurer", species: "Human" };
+    if (!m.images || typeof m.images !== "object") m.images = { portrait: "" };
+    if (!m.vitals || typeof m.vitals !== "object") m.vitals = {};
+    if (!m.progression || typeof m.progression !== "object") m.progression = {};
+    if (!Array.isArray(m.statusEffects)) m.statusEffects = [];
+    if (!Array.isArray(m.trackers)) m.trackers = [];
+    if (!m.partyRole) m.partyRole = "DPS";
+    if (typeof m.active !== "boolean") m.active = true;
+
+    const vitalsDefaults = { hp: 100, maxHp: 100, mp: 50, maxMp: 50, ap: 10, maxAp: 10 };
+    for (const [k, v] of Object.entries(vitalsDefaults)) {
+        if (!Number.isFinite(Number(m.vitals[k]))) m.vitals[k] = v;
+    }
+
+    m.vitals.maxHp = Math.max(1, Number(m.vitals.maxHp));
+    m.vitals.maxMp = Math.max(1, Number(m.vitals.maxMp));
+    m.vitals.maxAp = Math.max(1, Number(m.vitals.maxAp));
+    m.vitals.hp = clamp(Number(m.vitals.hp), 0, Number(m.vitals.maxHp));
+    m.vitals.mp = clamp(Number(m.vitals.mp), 0, Number(m.vitals.maxMp));
+    m.vitals.ap = clamp(Number(m.vitals.ap), 0, Number(m.vitals.maxAp));
+
+    if (!Number.isFinite(Number(m.progression.level))) m.progression.level = 1;
+    if (!Number.isFinite(Number(m.progression.xp))) m.progression.xp = 0;
+    m.progression.level = Math.max(1, Math.round(Number(m.progression.level)));
+    m.progression.xp = Math.max(0, Number(m.progression.xp));
+
+    m.statusEffects = m.statusEffects
+        .map((x) => String(x || "").trim().slice(0, 50))
+        .filter(Boolean)
+        .slice(0, 24);
+    m.trackers = m.trackers.map((t) => normalizePartyTracker(t)).filter(Boolean).slice(0, 24);
+}
+
+function roleToFormationLane(role) {
+    const r = String(role || "").toLowerCase();
+    if (/(tank|bruiser|guardian|vanguard|front)/.test(r)) return "front";
+    if (/(healer|mage|caster|ranger|support|sniper|back)/.test(r)) return "back";
+    return "mid";
+}
+
+function removeMemberFromFormationLanes(s, memberId) {
+    ensureParty(s);
+    const id = String(memberId || "");
+    if (!id) return false;
+    let changed = false;
+    for (const lane of ["front", "mid", "back"]) {
+        const before = s.party.formation.lanes[lane].length;
+        s.party.formation.lanes[lane] = s.party.formation.lanes[lane].filter((v) => String(v || "") !== id);
+        if (s.party.formation.lanes[lane].length !== before) changed = true;
+    }
+    return changed;
+}
+
+function assignMemberToFormationLane(s, member, laneRaw) {
+    if (!member) return false;
+    ensureParty(s);
+    const id = String(member.id || "");
+    if (!id) return false;
+
+    let lane = String(laneRaw || "").trim().toLowerCase();
+    if (!lane || lane === "auto") lane = roleToFormationLane(member.partyRole);
+    if (!["front", "mid", "back", "reserve"].includes(lane)) lane = roleToFormationLane(member.partyRole);
+
+    let changed = removeMemberFromFormationLanes(s, id);
+    if (lane !== "reserve") {
+        if (!s.party.formation.lanes[lane].includes(id)) {
+            s.party.formation.lanes[lane].push(id);
+            changed = true;
+        }
+    }
+    return changed;
+}
+
+function isUserPartyMember(s, m, nameHint = "") {
+    const memberName = normKey(nameHint || m?.identity?.name || m?.name || "");
+    const coreName = normKey(s?.character?.name || "");
+    if (Array.isArray(m?.roles) && m.roles.includes("User")) return true;
+    return !!(memberName && coreName && memberName === coreName);
+}
+
+function applyPartyMemberUpdate(m, upd = {}) {
+    if (!m || !upd || typeof upd !== "object") return false;
+    ensurePartyMemberState(m);
+
+    const before = JSON.stringify({
+        cls: m?.identity?.class,
+        role: m?.partyRole,
+        active: m?.active,
+        vitals: m?.vitals,
+        progression: m?.progression,
+        statusEffects: m?.statusEffects,
+        trackers: m?.trackers,
+    });
+
+    const cls = String(upd?.class || "").trim();
+    if (cls) m.identity.class = cls.slice(0, 40);
+
+    const role = String(upd?.role || "").trim();
+    if (role) m.partyRole = role.slice(0, 40);
+
+    if (typeof upd?.active === "boolean") m.active = upd.active;
+
+    const applyMeter = (currentKey, maxKey, raw) => {
+        const setVal = firstFiniteNumber(raw?.set, raw?.value);
+        const deltaVal = firstFiniteNumber(raw?.delta);
+        const maxVal = firstFiniteNumber(raw?.max);
+
+        if (maxVal !== null) m.vitals[maxKey] = Math.max(1, Number(maxVal));
+        const max = Math.max(1, Number(m.vitals[maxKey] || 1));
+
+        if (setVal !== null) {
+            m.vitals[currentKey] = clamp(Number(setVal), 0, max);
+            return;
+        }
+        if (deltaVal !== null && deltaVal !== 0) {
+            m.vitals[currentKey] = clamp(Number(m.vitals[currentKey] || 0) + Number(deltaVal), 0, max);
+        }
+    };
+
+    applyMeter("hp", "maxHp", {
+        set: firstFiniteNumber(upd?.setHp, upd?.hpSet, upd?.hp?.set, upd?.hp),
+        delta: firstFiniteNumber(upd?.deltaHp, upd?.hpDelta, upd?.hp?.delta),
+        max: firstFiniteNumber(upd?.maxHp, upd?.hpMax, upd?.hp?.max),
+    });
+
+    applyMeter("mp", "maxMp", {
+        set: firstFiniteNumber(upd?.setMp, upd?.mpSet, upd?.mp?.set, upd?.mp),
+        delta: firstFiniteNumber(upd?.deltaMp, upd?.mpDelta, upd?.mp?.delta),
+        max: firstFiniteNumber(upd?.maxMp, upd?.mpMax, upd?.mp?.max),
+    });
+
+    applyMeter("ap", "maxAp", {
+        set: firstFiniteNumber(upd?.setAp, upd?.apSet, upd?.ap?.set, upd?.ap),
+        delta: firstFiniteNumber(upd?.deltaAp, upd?.apDelta, upd?.ap?.delta),
+        max: firstFiniteNumber(upd?.maxAp, upd?.apMax, upd?.ap?.max),
+    });
+
+    const levelVal = firstFiniteNumber(upd?.level, upd?.setLevel, upd?.xp?.level);
+    if (levelVal !== null) m.progression.level = Math.max(1, Math.round(Number(levelVal)));
+
+    const xpSet = firstFiniteNumber(upd?.setXp, upd?.xpSet, upd?.xp?.set, upd?.xp);
+    const xpDelta = firstFiniteNumber(upd?.deltaXp, upd?.xpDelta, upd?.xp?.delta);
+    if (xpSet !== null) {
+        m.progression.xp = Math.max(0, Number(xpSet));
+    } else if (xpDelta !== null && xpDelta !== 0) {
+        m.progression.xp = Math.max(0, Number(m.progression.xp || 0) + Number(xpDelta));
+    }
+
+    const statusObj = upd?.statusEffects && typeof upd.statusEffects === "object" ? upd.statusEffects : null;
+    const statusAdd = statusObj && Array.isArray(statusObj.add) ? statusObj.add : [];
+    const statusRem = statusObj && Array.isArray(statusObj.remove) ? statusObj.remove : [];
+    if (statusAdd.length || statusRem.length) {
+        const map = new Map((Array.isArray(m.statusEffects) ? m.statusEffects : [])
+            .map((x) => {
+                const label = String(x || "").trim().slice(0, 50);
+                return [normKey(label), label];
+            })
+            .filter(([k, v]) => k && v));
+        for (const r of statusRem) {
+            const key = normKey(r);
+            if (key) map.delete(key);
+        }
+        for (const a of statusAdd) {
+            const label = String(a || "").trim().slice(0, 50);
+            const key = normKey(label);
+            if (!key || map.has(key)) continue;
+            map.set(key, label);
+        }
+        m.statusEffects = Array.from(map.values()).slice(0, 24);
+    }
+
+    if (!Array.isArray(m.trackers)) m.trackers = [];
+    if (Array.isArray(upd?.newTrackers)) {
+        for (const raw of upd.newTrackers.slice(0, 24)) {
+            const t = normalizePartyTracker(raw);
+            const hasId = m.trackers.some((x) => String(x?.id || "") === t.id);
+            const hasName = m.trackers.some((x) => normKey(x?.name) === normKey(t.name));
+            if (hasId || hasName) continue;
+            if (m.trackers.length >= 24) break;
+            m.trackers.push(t);
+        }
+    }
+
+    if (Array.isArray(upd?.trackerUpdates)) {
+        for (const raw of upd.trackerUpdates.slice(0, 32)) {
+            const id = String(raw?.id || "").trim();
+            const nameKey = normKey(raw?.name);
+            let tracker = null;
+            if (id) tracker = m.trackers.find((x) => String(x?.id || "") === id) || null;
+            if (!tracker && nameKey) tracker = m.trackers.find((x) => normKey(x?.name) === nameKey) || null;
+            if (!tracker) {
+                if (m.trackers.length >= 24) continue;
+                tracker = normalizePartyTracker({
+                    id: id || nextPartyTrackerId(),
+                    name: String(raw?.name || id || "Tracker"),
+                    current: 0,
+                    max: firstFiniteNumber(raw?.max) ?? 100,
+                    color: raw?.color,
+                    notes: raw?.notes,
+                });
+                m.trackers.push(tracker);
+            }
+
+            const maxVal = firstFiniteNumber(raw?.max);
+            if (maxVal !== null) tracker.max = Math.max(1, Number(maxVal));
+            const setVal = firstFiniteNumber(raw?.set);
+            const deltaVal = firstFiniteNumber(raw?.delta);
+            if (setVal !== null) tracker.current = Number(setVal);
+            else if (deltaVal !== null && deltaVal !== 0) tracker.current = Number(tracker.current || 0) + Number(deltaVal);
+            tracker.current = clamp(Number(tracker.current || 0), 0, Math.max(1, Number(tracker.max || 100)));
+
+            if (raw?.color !== undefined) tracker.color = normalizePartyTrackerColor(raw.color);
+            if (raw?.notes !== undefined) tracker.notes = String(raw.notes || "").slice(0, 800);
+            if (raw?.name !== undefined) {
+                const nm = String(raw.name || "").trim().slice(0, 60);
+                if (nm) tracker.name = nm;
+            }
+        }
+    }
+
+    ensurePartyMemberState(m);
+    const after = JSON.stringify({
+        cls: m?.identity?.class,
+        role: m?.partyRole,
+        active: m?.active,
+        vitals: m?.vitals,
+        progression: m?.progression,
+        statusEffects: m?.statusEffects,
+        trackers: m?.trackers,
+    });
+    return before !== after;
+}
+
+function syncUserMemberToCoreVitals(s, m) {
+    if (!s || !m) return false;
+    ensurePartyMemberState(m);
+    if (!s.character || typeof s.character !== "object") s.character = {};
+
+    const before = JSON.stringify({
+        hp: s.hp,
+        maxHp: s.maxHp,
+        mp: s.mp,
+        maxMp: s.maxMp,
+        ap: s.ap,
+        maxAp: s.maxAp,
+        xp: s.xp,
+        level: s?.character?.level,
+        statusEffects: s?.character?.statusEffects,
+    });
+
+    s.hp = Number(m.vitals?.hp || 0);
+    s.maxHp = Math.max(1, Number(m.vitals?.maxHp || 1));
+    s.mp = Number(m.vitals?.mp || 0);
+    s.maxMp = Math.max(1, Number(m.vitals?.maxMp || 1));
+    s.ap = Number(m.vitals?.ap || 0);
+    s.maxAp = Math.max(1, Number(m.vitals?.maxAp || 1));
+    s.xp = Math.max(0, Number(m.progression?.xp || 0));
+    s.character.level = Math.max(1, Number(m.progression?.level || 1));
+    s.character.statusEffects = Array.isArray(m.statusEffects) ? m.statusEffects.slice(0, 40) : [];
+
+    const after = JSON.stringify({
+        hp: s.hp,
+        maxHp: s.maxHp,
+        mp: s.mp,
+        maxMp: s.maxMp,
+        ap: s.ap,
+        maxAp: s.maxAp,
+        xp: s.xp,
+        level: s?.character?.level,
+        statusEffects: s?.character?.statusEffects,
+    });
+    return before !== after;
 }
 
 function ensureEquipArrays(s) {
@@ -486,7 +869,64 @@ function roleToTab(role) {
     if (r.includes("romance") || r.includes("lover") || r.includes("dating")) return "romance";
     if (r.includes("family") || r.includes("sister") || r.includes("brother") || r.includes("mother") || r.includes("father")) return "family";
     if (r.includes("rival") || r.includes("enemy") || r.includes("hostile")) return "rivals";
+    if (r.includes("associate") || r.includes("acquaintance") || r.includes("contact") || r.includes("npc") || r.includes("merchant") || r.includes("stranger")) return "associates";
     return "friends";
+}
+
+function normalizeSocialNameKey(name) {
+    return String(name || "").trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function toBool(v) {
+    if (typeof v === "boolean") return v;
+    const s = String(v || "").toLowerCase().trim();
+    return s === "true" || s === "yes" || s === "1";
+}
+
+function shouldExcludeSocialName(name, { deletedSet, userNames } = {}) {
+    const raw = String(name || "").trim();
+    if (!raw) return true;
+    if (raw.length > 64) return true;
+    const key = normalizeSocialNameKey(raw)
+        .replace(/^[\[{(<\s]+|[\]})>\s]+$/g, "")
+        .trim();
+    if (!key) return true;
+
+    if (deletedSet && deletedSet.has(key)) return true;
+
+    const exact = new Set([
+        "you",
+        "user",
+        "system",
+        "narrator",
+        "game",
+        "game master",
+        "gm",
+        "assistant",
+        "omniscient",
+        "omniscent",
+        "meta",
+        "metadata",
+        "tool",
+        "tool card",
+        "npc tool",
+        "npc controller",
+        "story",
+        "storyteller",
+        "lorebook",
+        "author note",
+        "author's note",
+        "ooc",
+    ]);
+    if (exact.has(key)) return true;
+    if (/^(meta|metadata|ooc|system|narrator|story|tool|gm|game master)\b/.test(key)) return true;
+    if (/\b(omniscient|omniscent|tool\s*card|npc\s*tool|metadata\s*card|lorebook|author'?s?\s*note|control\s*card|system\s*prompt|stage\s*direction)\b/.test(key)) return true;
+
+    if (Array.isArray(userNames)) {
+        const set = new Set(userNames.map(x => normalizeSocialNameKey(x)).filter(Boolean));
+        if (set.has(key)) return true;
+    }
+    return false;
 }
 
 function stripCssBlocks(text) {
@@ -525,15 +965,46 @@ function stripCssBlocks(text) {
  */
 export async function scanEverything(opts = {}) {
     const s = getSettings();
-    if (s.enabled === false) return;
     const force = !!opts?.force;
+    if (s.enabled === false && !force) return;
     if (!force && s.generation?.scanAllEnabled === false) return;
     ensureState(s);
+    const countSocialPeople = (st) => {
+        try {
+            const social = st?.social && typeof st.social === "object" ? st.social : {};
+            return ["friends", "associates", "romance", "family", "rivals"]
+                .reduce((n, k) => n + (Array.isArray(social[k]) ? social[k].length : 0), 0);
+        } catch (_) {
+            return 0;
+        }
+    };
+    const countPhoneMsgs = (st) => {
+        try {
+            const threads = st?.phone?.smsThreads && typeof st.phone.smsThreads === "object" ? st.phone.smsThreads : {};
+            return Object.values(threads).reduce((n, arr) => n + (Array.isArray(arr) ? arr.length : 0), 0);
+        } catch (_) {
+            return 0;
+        }
+    };
+    const beforeCounts = {
+        items: Array.isArray(s?.inventory?.items) ? s.inventory.items.length : 0,
+        skills: Array.isArray(s?.inventory?.skills) ? s.inventory.skills.length : 0,
+        assets: Array.isArray(s?.inventory?.assets) ? s.inventory.assets.length : 0,
+        life: Array.isArray(s?.life?.trackers) ? s.life.trackers.length : 0,
+        quests: (() => { const j = s?.journal; if (!j) return 0; return (Array.isArray(j.pending) ? j.pending.length : 0) + (Array.isArray(j.active) ? j.active.length : 0) + (Array.isArray(j.completed) ? j.completed.length : 0) + (Array.isArray(j.abandoned) ? j.abandoned.length : 0); })(),
+        lore: Array.isArray(s?.databank) ? s.databank.length : 0,
+        party: Array.isArray(s?.party?.members) ? s.party.members.length : 0,
+        social: countSocialPeople(s),
+        phoneMsgs: countPhoneMsgs(s)
+    };
 
     const sourceMesId = (() => {
         const n = Number(opts?.sourceMesId);
         return Number.isFinite(n) && n >= 0 ? n : null;
     })();
+    const shouldTrackUndo = sourceMesId !== null;
+    let beforeSnap = null;
+    let undoFp = "";
 
     const undo = ensureUndoStore();
     try {
@@ -541,9 +1012,6 @@ export async function scanEverything(opts = {}) {
         undo.lastChatLen = Number(sig?.count || 0) || 0;
         undo.lastChatTailFp = readChatTailFingerprint();
     } catch (_) {}
-    if (sourceMesId !== null && !undo.byMesId[String(sourceMesId)]) {
-        undo.byMesId[String(sourceMesId)] = { before: snapshotScanTouchedState(s), at: Date.now() };
-    }
 
     const gate = (() => {
         try {
@@ -562,9 +1030,47 @@ export async function scanEverything(opts = {}) {
     if (!gate.ok) return;
     try {
 
-    const chatSnippet = await getChatTranscriptText({ maxMessages: 80, maxChars: 30000 });
+    const scanSig = readChatScanSignature();
+    if (!force && scanSig) {
+        try {
+            const d = (window.UIE_scanEverythingDedupe = window.UIE_scanEverythingDedupe || { sig: "", mesId: null, at: 0 });
+            const sameSig = d.sig === scanSig;
+            const sameMes =
+                (sourceMesId === null && d.mesId === null) ||
+                (sourceMesId !== null && d.mesId !== null && Number(d.mesId) === Number(sourceMesId));
+            const age = Date.now() - Number(d.at || 0);
+            if (sameSig && sameMes && age < 12000) {
+                return { ok: true, changed: false, skipped: "unchanged_chat" };
+            }
+        } catch (_) {}
+    }
+
+    const chatSnippet = await getChatTranscriptText({ maxMessages: 40, maxChars: 12000 });
 
     if (!chatSnippet) return;
+
+    if (shouldTrackUndo) {
+        undoFp = (() => {
+            try {
+                const fp = String(readChatTailFingerprint() || "").trim();
+                if (fp) return fp;
+                return `mes:${sourceMesId}`;
+            } catch (_) {
+                return `mes:${sourceMesId}`;
+            }
+        })();
+
+        const key = String(sourceMesId);
+        const prev = undo.byMesId[key];
+        // If this message is being re-generated/swiped, revert its previous scan effects first.
+        if (prev && Array.isArray(prev.ops) && prev.ops.length) {
+            const changed = applyUndoOps(s, prev.ops);
+            if (changed) commitStateUpdate({ save: true, layout: false, emit: true, undo: true, mesId: sourceMesId });
+        }
+        // Capture baseline AFTER reverting previous ops so this message stores only fresh effects.
+        beforeSnap = snapshotScanTouchedState(s);
+        undo.byMesId[key] = { at: Date.now() };
+    }
 
     // --- PHASE 1: FREE REGEX CHECKS (Currency) ---
     // We check the LAST message for instant currency updates (avoids AI cost/latency for simple gold)
@@ -593,8 +1099,7 @@ export async function scanEverything(opts = {}) {
         else if (currencyGain) { // Auto-create if gained
              s.inventory.items.push({ kind: "item", name: `${sym} Currency`, type: "currency", symbol: sym, description: `Currency item for ${sym}.`, rarity: "common", qty: s.currency, mods: {}, statusEffects: [] });
         }
-        saveSettings();
-        updateLayout();
+        commitStateUpdate({ save: true, layout: false, emit: true });
     }
 
     // --- PHASE 2: AI SCAN (Everything Else) ---
@@ -630,39 +1135,62 @@ Life Trackers: ${JSON.stringify((s.life?.trackers || []).slice(0, 30).map(t => (
 Current Status Effects: ${JSON.stringify((s.character?.statusEffects || []).slice(0, 30))}
 Existing Inventory Items: ${JSON.stringify(invNames)}
 Existing Skills: ${JSON.stringify(skillNames)}
-Existing Social Names: ${JSON.stringify((() => { try { ensureSocial(s); const arr = ["friends","romance","family","rivals"].flatMap(k => (s.social[k] || []).map(p => String(p?.name || "").trim()).filter(Boolean)); return Array.from(new Set(arr)).slice(0, 120); } catch (_) { return []; } })())}
+Existing Social Names: ${JSON.stringify((() => { try { ensureSocial(s); const arr = ["friends","associates","romance","family","rivals"].flatMap(k => (s.social[k] || []).map(p => String(p?.name || "").trim()).filter(Boolean)); return Array.from(new Set(arr)).slice(0, 120); } catch (_) { return []; } })())}
 Deleted Social Names: ${JSON.stringify((() => { try { ensureSocial(s); return (s.socialMeta.deletedNames || []).slice(-120); } catch (_) { return []; } })())}
+Existing Party Members: ${JSON.stringify((() => { try { ensureParty(s); return (Array.isArray(s.party?.members) ? s.party.members : []).slice(0, 20).map((m) => ({ name: String(m?.identity?.name || ""), class: String(m?.identity?.class || ""), role: String(m?.partyRole || ""), active: m?.active !== false, hp: Number(m?.vitals?.hp ?? 0), maxHp: Number(m?.vitals?.maxHp ?? 100), mp: Number(m?.vitals?.mp ?? 0), maxMp: Number(m?.vitals?.maxMp ?? 50), ap: Number(m?.vitals?.ap ?? 0), maxAp: Number(m?.vitals?.maxAp ?? 10), level: Number(m?.progression?.level ?? 1), xp: Number(m?.progression?.xp ?? 0), trackers: Array.isArray(m?.trackers) ? m.trackers.slice(0, 10).map(t => ({ id: String(t?.id || ""), name: String(t?.name || ""), current: Number(t?.current ?? 0), max: Number(t?.max ?? 100) })) : [] })); } catch (_) { return []; } })())}
+Current Party Formation: ${JSON.stringify((() => { try { ensureParty(s); return s.party?.formation?.lanes || { front: [], mid: [], back: [] }; } catch (_) { return { front: [], mid: [], back: [] }; } })())}
 
 Task: Return a SINGLE JSON object with these keys:
 1. "world": Update location, threat, status, time, weather.
 2. "inventory": Lists of "added" (items found/acquired/created) and "removed" (items lost/used/given). Ignore currency.
 3. "stats": Integer deltas for "hp" and "mp" (e.g. -10, +5).
-4. "skills": (optional) { "add":[{"name":"","desc":"","type":"active|passive"}] } for NEW skills learned, purchased, revealed, or used by name.
-5. "assets": (optional) { "add":[{"name":"","desc":"","category":""}] } for NEW titles, deeds, key lore assets, etc.
-6. "quests": List of new quest objects { "title": "...", "desc": "...", "type": "main|side" } if a NEW quest is explicitly given.
+4. "skills": (optional) { "add":[{"name":"","desc":"","type":"active|passive","mods":{},"active":{},"passive":{},"evidence":""}] } for NEW skills learned/purchased/acquired by the user.
+5. "assets": (optional) { "add":[{"name":"","desc":"","category":"property|vehicle|ship|business|other","owned":true,"evidence":""}] } for NEW owned assets.
+6. "quests": List of quest-like objectives { "title": "...", "desc": "...", "type": "main|side" }. Add anything that could logically be a quest from context. Must be grounded in chat; no random additions.
 7. "lore": List of new lore objects { "key": "Term", "entry": "Description" } if NEW important lore is revealed.
 8. "messages": List of { "from": "Name", "text": "..." } if a character sends a text message/SMS in the chat.
 9. "phoneNumbers": (optional) [{ "name":"", "number":"" }] if a phone number is shown/saved (e.g. 404-555-0192).
 10. "life": (optional) { "lifeUpdates":[{"name":"","delta":0,"set":null,"max":null}], "newTrackers":[{"name":"","current":0,"max":100,"color":"#89b4fa","notes":""}] }
 11. "statusEffects": (optional) { "add":[""], "remove":[""] } (NO EMOJIS)
-12. "social": (optional) { "add":[{"name":"","role":"","affinity":50}], "remove":[""] } for ANY character present in the scene.
-13. "battle": (optional) { "active": true|false, "enemies":[{"name":"","hp":null,"status":"","threat":""}], "log":[\"...\"] } when combat happens.
-14. "party": (optional) { "joined": [{"name":"","class":"","role":""}], "left": ["Name"] } for party roster changes.
+12. "social": (optional) { "add":[{"name":"","role":"","affinity":50,"presence":"present|mentioned|known_past","met_physically":true,"known_from_past":false,"relationship":"","familyRole":""}], "remove":[""] } for in-story characters only.
+13. "battle": (optional) { "active": true|false, "enemies":[{"name":"","hp":null,"maxHp":null,"level":0,"boss":false,"statusEffects":[""],"status":"","threat":""}], "turnOrder":[""], "log":["..."] } when combat happens.
+14. "party": (optional) {
+  "joined": [{"name":"","class":"","role":"","lane":"front|mid|back|reserve|auto"}],
+  "left": ["Name"],
+  "updates": [{
+    "name":"",
+    "class":"",
+    "role":"",
+    "active": true,
+    "lane":"front|mid|back|reserve|auto",
+    "hp": {"delta":0,"set":null,"max":null},
+    "mp": {"delta":0,"set":null,"max":null},
+    "ap": {"delta":0,"set":null,"max":null},
+    "xp": {"delta":0,"set":null},
+    "level": null,
+    "statusEffects": {"add":[],"remove":[]},
+    "trackerUpdates": [{"id":"","name":"","delta":0,"set":null,"max":null,"color":"#89b4fa","notes":""}],
+    "newTrackers": [{"name":"","current":0,"max":100,"color":"#89b4fa","notes":""}]
+  }],
+  "formation": {"front":["Name"],"mid":["Name"],"back":["Name"]}
+} for roster, per-member trackers/vitals, and formation changes.
 15. "equipped": (optional) { "equip": [{"item":"","slot":""}], "unequip": ["slot" or "item"] } if user equips/unequips gear.
 
 Rules:
-- "inventory": CHECK AGGRESSIVELY. If the user picks up, buys, is given, or creates an item, ADD IT. Even if implied.
-- "added": [{ "name": "Item Name", "type": "item|weapon|armor", "qty": 1, "desc": "Description" }]
+- STRICT EVIDENCE MODE: add to inventory/skills/assets ONLY when chat explicitly states user ownership or acquisition. Never infer.
+- "inventory.added": [{ "name": "Item Name", "type": "item|weapon|armor", "qty": 1, "desc": "Description", "evidence":"short quote/paraphrase from chat proving acquisition" }]
 - "removed": ["Item Name"]
 - "equipped": Only if explicitly stated (e.g. "User equips the sword"). Slot examples: "head","chest","main","off".
-- "skills.add": Only add if it is NEW (not in Existing Skills).
-- "social": Scan for ANY character names in the chat who are not in 'Existing Social Names'. If a character speaks or is described, ADD THEM.
-- "social.add": [{ "name": "Name", "role": "friend|rival|romance|family", "affinity": 50 }]
-- "party": Only if they explicitly JOIN or LEAVE the player's traveling party.
-- EXCLUDE from social: "${userName}", "System", "Narrator", "Game", "Omniscient", or any metadata card names.
+- "skills.add": Only add if it is NEW (not in Existing Skills), has explicit acquisition evidence, and include "evidence".
+- "assets.add": Only owned assets the user/party explicitly has. Categories must be one of: property, vehicle, ship, business, other.
+- "social": Scan for in-story character names in chat who are not in 'Existing Social Names'.
+- "social.add": [{ "name": "Name", "role": "friend|associate|rival|romance|family", "affinity": 50, "presence":"present|mentioned|known_past", "met_physically": true, "known_from_past": false, "relationship":"", "familyRole":"" }]
+- "party": Use joined/left only for explicit party roster changes. Use party.updates only for explicit member-state changes (vitals/xp/status/trackers/lane) grounded in chat.
+- EXCLUDE from social: "${userName}", "System", "Narrator", "Game", "Omniscient", tool cards, NPC controller cards, and metadata/control card names.
 - "world": Keep values short.
 - If no change, omit the key or leave empty.
 - Status effects should be short labels like "Tired", "Poisoned", "Smells like smoke". No emojis.
+- For battle enemies, keep hp/maxHp as null when unknown instead of inventing numbers. Include maxHp/level only when grounded in chat.
 
 Chat:
 ${chatSnippet}
@@ -674,12 +1202,12 @@ ${chatSnippet}
         if (force) {
             try { notify("warning", "Scan blocked: enable 'Allow System Checks (AI)' in UIE Settings.", "Scan", "scanBlocked"); } catch (_) {}
         }
-        return;
+        return { ok: false, error: "no_response" };
     }
 
     try {
         const data = safeJsonParseObject(res);
-        if (!data) return;
+        if (!data) return { ok: false, error: "invalid_json" };
 
         let needsSave = false;
 
@@ -689,14 +1217,27 @@ ${chatSnippet}
             needsSave = true;
         }
 
+        const sourceTag = force ? "scan" : "scan_all";
+        const nowTs = Date.now();
+
         // 2. Inventory
         if (data.inventory) {
             if (Array.isArray(data.inventory.added)) {
                 data.inventory.added.forEach(it => {
                     if (!it || !it.name) return;
-                    const exist = s.inventory.items.find(x => x.name === it.name);
+                    const evidence = String(it?.evidence || it?.desc || "").trim();
+                    if (!hasExplicitOwnershipEvidence(evidence)) return;
+                    const itemKey = normKey(it.name);
+                    if (!itemKey) return;
+                    const exist = s.inventory.items.find(x => normKey(x?.name) === itemKey);
                     if (exist) {
                         exist.qty = (exist.qty || 1) + (it.qty || 1);
+                        exist._meta = {
+                            ...(exist._meta && typeof exist._meta === "object" ? exist._meta : {}),
+                            source: sourceTag,
+                            updatedAt: nowTs,
+                            evidence: evidence.slice(0, 240)
+                        };
                         notify("info", `Added ${it.qty || 1}x ${it.name}`, "Inventory", "loot");
                     } else {
                         s.inventory.items.push({
@@ -707,7 +1248,8 @@ ${chatSnippet}
                             qty: it.qty || 1,
                             rarity: "common",
                             mods: {},
-                            statusEffects: []
+                            statusEffects: [],
+                            _meta: { source: sourceTag, createdAt: nowTs, updatedAt: nowTs, evidence: evidence.slice(0, 240) }
                         });
                         notify("success", `Found ${it.name}`, "Inventory", "loot");
                     }
@@ -716,7 +1258,7 @@ ${chatSnippet}
             }
             if (Array.isArray(data.inventory.removed)) {
                 data.inventory.removed.forEach(name => {
-                    const idx = s.inventory.items.findIndex(x => x.name.toLowerCase().includes(String(name).toLowerCase()));
+                    const idx = s.inventory.items.findIndex(x => normKey(x?.name).includes(normKey(name)));
                     if (idx !== -1) {
                         const it = s.inventory.items[idx];
                         if (it.qty > 1) it.qty--;
@@ -732,17 +1274,27 @@ ${chatSnippet}
         if (data.stats && typeof data.stats === "object") {
             const dhp = Number(data.stats.hp);
             const dmp = Number(data.stats.mp);
+            let vitalsChanged = false;
             if (Number.isFinite(dhp) && dhp !== 0) {
                 const maxHp = Number(s.maxHp ?? 100);
                 const curHp = Number(s.hp ?? maxHp);
                 s.hp = clamp(curHp + dhp, 0, Number.isFinite(maxHp) ? maxHp : 100);
+                vitalsChanged = true;
                 needsSave = true;
             }
             if (Number.isFinite(dmp) && dmp !== 0) {
                 const maxMp = Number(s.maxMp ?? 50);
                 const curMp = Number(s.mp ?? maxMp);
                 s.mp = clamp(curMp + dmp, 0, Number.isFinite(maxMp) ? maxMp : 50);
+                vitalsChanged = true;
                 needsSave = true;
+            }
+            if (vitalsChanged) {
+                try { if (typeof $ !== "undefined") $(document).trigger("uie:updateVitals"); } catch (_) {}
+                try { window.dispatchEvent(new CustomEvent("uie:updateVitals")); } catch (_) {}
+                if ((Math.abs(dhp) >= 5 || Math.abs(dmp) >= 5)) {
+                    try { injectRpEvent(`[System: HP ${s.hp}/${s.maxHp ?? 100}, MP ${s.mp}/${s.maxMp ?? 50}.]`); } catch (_) {}
+                }
             }
         }
 
@@ -750,18 +1302,26 @@ ${chatSnippet}
         if (data.skills && typeof data.skills === "object") {
             const skillAdd = Array.isArray(data.skills.add) ? data.skills.add : [];
             if (!Array.isArray(s.inventory.skills)) s.inventory.skills = [];
-            const have = new Set(s.inventory.skills.map(x => String(x?.name || "").trim().toLowerCase()).filter(Boolean));
+            const have = new Set(s.inventory.skills.map(x => normKey(x?.name)).filter(Boolean));
             let added = 0;
             for (const sk of skillAdd.slice(0, 40)) {
                 const nm = String(sk?.name || "").trim();
                 if (!nm) continue;
-                const key = nm.toLowerCase();
+                const evidence = String(sk?.evidence || sk?.desc || "").trim();
+                if (!hasExplicitOwnershipEvidence(evidence)) continue;
+                const key = normKey(nm);
                 if (have.has(key)) continue;
+                const type = normalizeSkillType(sk?.skillType || sk?.type);
                 s.inventory.skills.push({
                     kind: "skill",
                     name: nm,
                     description: String(sk?.desc || "").trim().slice(0, 1200),
-                    type: String(sk?.type || "active").trim()
+                    type,
+                    skillType: type,
+                    mods: sanitizeMods(sk?.mods),
+                    active: (sk?.active && typeof sk.active === "object") ? sk.active : null,
+                    passive: (sk?.passive && typeof sk.passive === "object") ? sk.passive : null,
+                    _meta: { source: sourceTag, createdAt: nowTs, updatedAt: nowTs, evidence: evidence.slice(0, 240) }
                 });
                 have.add(key);
                 added++;
@@ -776,18 +1336,22 @@ ${chatSnippet}
         if (data.assets && (typeof data.assets === "object" || Array.isArray(data.assets))) {
             const add = Array.isArray(data.assets) ? data.assets : (Array.isArray(data.assets.add) ? data.assets.add : []);
             if (!Array.isArray(s.inventory.assets)) s.inventory.assets = [];
-            const have = new Set(s.inventory.assets.map(x => String(x?.name || "").trim().toLowerCase()).filter(Boolean));
+            const have = new Set(s.inventory.assets.map(x => normKey(x?.name)).filter(Boolean));
             let added = 0;
             for (const a of add.slice(0, 40)) {
                 const nm = String(a?.name || "").trim();
                 if (!nm) continue;
-                const key = nm.toLowerCase();
+                const evidence = String(a?.evidence || a?.desc || "").trim();
+                if (!hasExplicitOwnershipEvidence(evidence)) continue;
+                const key = normKey(nm);
                 if (have.has(key)) continue;
                 s.inventory.assets.push({
                     kind: "asset",
                     name: nm,
                     description: String(a?.desc || "").trim().slice(0, 1200),
-                    category: String(a?.category || "").trim().slice(0, 80)
+                    category: normalizeAssetCategory(a?.category || a?.type || a?.kind || ""),
+                    owned: a?.owned !== false,
+                    _meta: { source: sourceTag, createdAt: nowTs, updatedAt: nowTs, evidence: evidence.slice(0, 240) }
                 });
                 have.add(key);
                 added++;
@@ -860,34 +1424,31 @@ ${chatSnippet}
             }
         }
 
-        // 4. Quests
+        // 4. Quests (unified with journal: all scan quests go to journal.pending)
         if (Array.isArray(data.quests)) {
-            if (!s.journal) s.journal = []; // Wait, journal is array of pages or quests?
-            // Checking journal.js structure: s.journal is likely Quest Log or Diary?
-            // Earlier I saw diary.js using s.diary.
-            // journal.js uses s.journal for quests.
-            if (!s.journal) s.journal = { quests: [], active: 0 };
-            if (Array.isArray(s.journal)) { // Legacy fix? Or is it s.quests?
-                 // Let's assume s.quests for Quests and s.diary for Diary.
-                 // Checking journal.js again...
-                 // It uses s.quests (implied by "ingestQuestsFromChatText"?)
-                 // No, earlier grep showed "s.diary".
-                 // Let's use s.quests for Quests.
-            }
-            if (!s.quests) s.quests = [];
+            ensureJournal(s);
+            const titleKey = (t) => String(t || "").trim().toLowerCase().slice(0, 80);
+            const allTitles = new Set([
+                ...(s.journal.pending || []).map(x => titleKey(x?.title)),
+                ...(s.journal.active || []).map(x => titleKey(x?.title)),
+                ...(s.journal.completed || []).map(x => titleKey(x?.title)),
+                ...(s.journal.abandoned || []).map(x => titleKey(x?.title))
+            ].filter(Boolean));
 
             data.quests.forEach(q => {
-                if (!q.title) return;
-                // Check dupes
-                if (s.quests.some(x => x.title === q.title)) return;
-                s.quests.push({
-                    id: Date.now() + Math.random(),
-                    title: q.title,
-                    desc: q.desc || "",
-                    status: "active",
-                    type: q.type || "side"
+                const title = String(q?.title || q?.name || "").trim().slice(0, 80);
+                if (!title) return;
+                const key = titleKey(title);
+                if (allTitles.has(key)) return;
+                const desc = String(q?.desc || q?.description || q?.details || "").trim().slice(0, 600);
+                s.journal.pending.push({
+                    title,
+                    desc: desc || "...",
+                    source: "scan",
+                    ts: Date.now()
                 });
-                notify("info", `New Quest: ${q.title}`, "Journal", "quest");
+                allTitles.add(key);
+                notify("info", `New Quest: ${title}`, "Journal", "quest");
                 needsSave = true;
             });
         }
@@ -895,17 +1456,13 @@ ${chatSnippet}
         // 5. Lore (Databank)
         if (Array.isArray(data.lore)) {
             if (!s.databank) s.databank = [];
+            const opts = { now: Date.now(), makeId: () => `db_${Date.now().toString(16)}_${Math.floor(Math.random() * 1e9).toString(16)}` };
             data.lore.forEach(l => {
                 if (!l.key || !l.entry) return;
-                if (s.databank.some(x => x.key === l.key)) return;
-                s.databank.push({
-                    key: l.key,
-                    content: l.entry,
-                    tags: ["auto"],
-                    created: Date.now()
-                });
-                notify("info", `New Lore: ${l.key}`, "Databank", "database");
-                needsSave = true;
+                if (addDatabankEntryWithDedupe(s.databank, { key: l.key, content: l.entry, tags: ["auto"] }, opts)) {
+                    notify("info", `New Lore: ${l.key}`, "Databank", "database");
+                    needsSave = true;
+                }
             });
         }
 
@@ -931,18 +1488,24 @@ ${chatSnippet}
         // 7. Social
         if (data.social && typeof data.social === "object") {
             ensureSocial(s);
-            const deleted = new Set((s.socialMeta.deletedNames || []).map(x => String(x || "").toLowerCase().trim()).filter(Boolean));
-            const existingLower = new Set(["friends", "romance", "family", "rivals"].flatMap(k => (s.social[k] || []).map(p => String(p?.name || "").toLowerCase().trim()).filter(Boolean)));
+            const deleted = new Set((s.socialMeta.deletedNames || []).map(x => normalizeSocialNameKey(x)).filter(Boolean));
+            const existingLower = new Set(["friends", "associates", "romance", "family", "rivals"].flatMap(k => (s.social[k] || []).map(p => normalizeSocialNameKey(p?.name || "")).filter(Boolean)));
+            const userNames = [userName, charName].map(x => String(x || "").trim()).filter(Boolean);
             const addList = Array.isArray(data.social.add) ? data.social.add : [];
             let added = 0;
             for (const v of addList.slice(0, 24)) {
                 const nm = String(v?.name || "").trim();
                 if (!nm) continue;
-                const key = nm.toLowerCase();
-                if (deleted.has(key)) continue;
+                const key = normalizeSocialNameKey(nm);
+                if (shouldExcludeSocialName(nm, { deletedSet: deleted, userNames })) continue;
                 if (existingLower.has(key)) continue;
                 const tab = roleToTab(v?.role);
                 const aff = Math.max(0, Math.min(100, Math.round(Number(v?.affinity ?? 50))));
+                const presence = String(v?.presence || "").toLowerCase().trim();
+                const met = toBool(v?.met_physically) || presence === "present" || presence === "in_scene" || presence === "in room";
+                const knownPast = toBool(v?.known_from_past) || presence === "known_past";
+                const relationship = String(v?.relationship || v?.role || "").trim().slice(0, 80);
+                const familyRole = String(v?.familyRole || v?.family_role || "").trim().slice(0, 80);
                 s.social[tab].push({
                     id: `person_${Date.now().toString(16)}_${Math.floor(Math.random() * 1e9).toString(16)}`,
                     name: nm,
@@ -952,15 +1515,16 @@ ${chatSnippet}
                     likes: "",
                     dislikes: "",
                     birthday: "",
-                    location: "",
+                    location: met ? "In current scene" : "",
                     age: "",
                     knownFamily: "",
-                    familyRole: "",
-                    relationshipStatus: String(v?.role || "").trim().slice(0, 80),
+                    familyRole,
+                    relationshipStatus: relationship,
                     url: "",
                     tab,
                     memories: [],
-                    met_physically: true
+                    met_physically: met,
+                    known_from_past: knownPast
                 });
                 existingLower.add(key);
                 added++;
@@ -992,26 +1556,99 @@ ${chatSnippet}
         }
 
         // 8. Battle
+        const prevBattleActive = !!(s?.battle?.state?.active);
         if (data.battle && typeof data.battle === "object") {
             if (!s.battle || typeof s.battle !== "object") s.battle = { auto: false, state: { active: false, enemies: [], turnOrder: [], log: [] } };
             if (!s.battle.state || typeof s.battle.state !== "object") s.battle.state = { active: false, enemies: [], turnOrder: [], log: [] };
-            if (typeof data.battle.active === "boolean") s.battle.state.active = data.battle.active;
+            if (!Array.isArray(s.battle.state.enemies)) s.battle.state.enemies = [];
+            if (!Array.isArray(s.battle.state.turnOrder)) s.battle.state.turnOrder = [];
+            if (!Array.isArray(s.battle.state.log)) s.battle.state.log = [];
+
+            if (typeof data.battle.active === "boolean") {
+                if (s.battle.state.active !== data.battle.active) needsSave = true;
+                s.battle.state.active = data.battle.active;
+            }
+
             if (Array.isArray(data.battle.enemies)) {
+                const prevEnemiesByName = new Map(
+                    (s.battle.state.enemies || [])
+                        .map((e) => [String(e?.name || "").toLowerCase().trim(), e])
+                        .filter(([k]) => !!k)
+                );
+
                 const normEnemies = data.battle.enemies
-                    .map(e => ({
-                        name: String(e?.name || "").trim(),
-                        hp: (e?.hp === null || e?.hp === undefined) ? null : Number(e.hp),
-                        status: String(e?.status || "").trim().slice(0, 60),
-                        threat: String(e?.threat || "").trim().slice(0, 60)
-                    }))
-                    .filter(e => e.name)
+                    .map((e) => {
+                        const name = String(e?.name || "").trim();
+                        if (!name) return null;
+                        const key = name.toLowerCase();
+                        const prev = prevEnemiesByName.get(key) || {};
+
+                        const hpRaw = (e?.hp === null || e?.hp === undefined) ? (prev?.hp ?? null) : Number(e.hp);
+                        const hp = (hpRaw === null || Number.isNaN(Number(hpRaw))) ? null : Number(hpRaw);
+
+                        const maxHpRaw = (e?.maxHp === null || e?.maxHp === undefined) ? (prev?.maxHp ?? null) : Number(e.maxHp);
+                        const maxHpCandidate = (maxHpRaw === null || Number.isNaN(Number(maxHpRaw))) ? null : Number(maxHpRaw);
+                        const maxHp = (maxHpCandidate !== null && Number.isFinite(maxHpCandidate) && maxHpCandidate > 0) ? maxHpCandidate : null;
+
+                        const levelRaw = (e?.level === null || e?.level === undefined) ? (prev?.level ?? 0) : Number(e.level);
+                        const level = Number.isFinite(Number(levelRaw)) ? Number(levelRaw) : 0;
+
+                        const statusEffects = (() => {
+                            const bits = [];
+                            const addFx = (value, maxLen = 50) => {
+                                const t = String(value || "").trim().slice(0, maxLen);
+                                if (!t || bits.includes(t)) return;
+                                bits.push(t);
+                            };
+
+                            if (Array.isArray(e?.statusEffects)) {
+                                for (const x of e.statusEffects) addFx(x, 50);
+                            }
+
+                            const status = String(e?.status || "").trim();
+                            const threat = String(e?.threat || "").trim();
+                            if (status) addFx(status, 50);
+                            if (threat) addFx(`Threat: ${threat}`, 48);
+
+                            if (Array.isArray(prev?.statusEffects)) {
+                                for (const x of prev.statusEffects) {
+                                    addFx(x, 50);
+                                    if (bits.length >= 8) break;
+                                }
+                            }
+
+                            return bits.slice(0, 8);
+                        })();
+
+                        const boss = (typeof e?.boss === "boolean")
+                            ? e.boss
+                            : (typeof prev?.boss === "boolean" ? prev.boss : /boss|elite/i.test(String(e?.threat || "")));
+
+                        return {
+                            name: name.slice(0, 60),
+                            hp: hp === null ? null : Math.max(0, Math.round(hp)),
+                            maxHp: maxHp === null ? null : Math.max(1, Math.round(maxHp)),
+                            level: Math.max(0, Math.round(level)),
+                            boss,
+                            statusEffects
+                        };
+                    })
+                    .filter(Boolean)
                     .slice(0, 12);
-                if (!Array.isArray(s.battle.state.enemies)) s.battle.state.enemies = [];
+
                 s.battle.state.enemies = normEnemies;
                 needsSave = true;
             }
+
+            if (Array.isArray(data.battle.turnOrder)) {
+                s.battle.state.turnOrder = data.battle.turnOrder
+                    .map((x) => String(x || "").trim().slice(0, 60))
+                    .filter(Boolean)
+                    .slice(0, 30);
+                needsSave = true;
+            }
+
             if (Array.isArray(data.battle.log)) {
-                if (!Array.isArray(s.battle.state.log)) s.battle.state.log = [];
                 for (const line of data.battle.log.slice(0, 10)) {
                     const t = String(line || "").trim();
                     if (!t) continue;
@@ -1020,45 +1657,146 @@ ${chatSnippet}
                 s.battle.state.log = s.battle.state.log.slice(-120);
                 needsSave = true;
             }
+
+            const nextBattleActive = !!(s?.battle?.state?.active);
+            try {
+                window.dispatchEvent(new CustomEvent("uie:battle_state_updated", { detail: { active: nextBattleActive, source: sourceTag } }));
+            } catch (_) {}
+            if (!prevBattleActive && nextBattleActive) {
+                try {
+                    window.dispatchEvent(new CustomEvent("uie:battle_detected", { detail: { source: sourceTag } }));
+                } catch (_) {}
+            }
         }
 
         // 9. Party
         if (data.party && typeof data.party === "object") {
             ensureParty(s);
+            let partyChanged = false;
+            let coreVitalsChanged = false;
+
+            const maybeSyncCoreFromMember = (member, nameHint = "") => {
+                if (!member) return;
+                if (isUserPartyMember(s, member, nameHint)) {
+                    coreVitalsChanged = syncUserMemberToCoreVitals(s, member) || coreVitalsChanged;
+                }
+            };
+
             // Joined
             if (Array.isArray(data.party.joined)) {
                 for (const p of data.party.joined) {
                     const nm = String(p?.name || "").trim();
                     if (!nm) continue;
-                    // Check duplicate
-                    if (s.party.members.some(m => m.identity.name.toLowerCase() === nm.toLowerCase())) continue;
-
-                    const m = createMember(nm);
-                    if (p.class) m.identity.class = String(p.class).trim().slice(0, 40);
-                    if (p.role) m.partyRole = String(p.role).trim().slice(0, 40);
-
-                    // Try to link avatar from social
-                    ensureSocial(s);
-                    const friend = ["friends","romance","family","rivals"].flatMap(k => s.social[k]).find(x => x.name.toLowerCase() === nm.toLowerCase());
-                    if (friend && friend.avatar) m.images.portrait = friend.avatar;
-
-                    s.party.members.push(m);
-                    notify("success", `${nm} joined the party!`, "Party", "party");
-                    needsSave = true;
+                    let m = findPartyMemberByName(s, nm);
+                    let created = false;
+                    if (!m) {
+                        m = createMember(nm);
+                        // Try to link avatar from social
+                        ensureSocial(s);
+                        const friend = ["friends", "associates", "romance", "family", "rivals"].flatMap(k => s.social[k]).find(x => String(x?.name || "").toLowerCase() === nm.toLowerCase());
+                        if (friend && friend.avatar) m.images.portrait = friend.avatar;
+                        s.party.members.push(m);
+                        notify("success", `${nm} joined the party!`, "Party", "party");
+                        created = true;
+                    }
+                    ensurePartyMemberState(m);
+                    const updateChanged = applyPartyMemberUpdate(m, p);
+                    const laneChanged = (p?.lane !== undefined && p?.lane !== null) ? assignMemberToFormationLane(s, m, p.lane) : false;
+                    if (created || updateChanged || laneChanged) {
+                        partyChanged = true;
+                        maybeSyncCoreFromMember(m, nm);
+                    }
                 }
             }
+
             // Left
             if (Array.isArray(data.party.left)) {
                 for (const name of data.party.left) {
                     const idx = s.party.members.findIndex(m => m.identity.name.toLowerCase() === String(name).toLowerCase());
                     if (idx !== -1) {
                         const m = s.party.members[idx];
+                        removeMemberFromFormationLanes(s, m?.id);
                         s.party.members.splice(idx, 1);
                         notify("info", `${m.identity.name} left the party.`, "Party", "party");
-                        needsSave = true;
+                        partyChanged = true;
                     }
                 }
             }
+
+            const partyUpdates = Array.isArray(data.party.updates)
+                ? data.party.updates
+                : (Array.isArray(data.party.memberUpdates) ? data.party.memberUpdates : []);
+
+            if (partyUpdates.length) {
+                for (const upd of partyUpdates.slice(0, 40)) {
+                    const nm = String(upd?.name || upd?.member || upd?.memberName || "").trim();
+                    if (!nm) continue;
+
+                    let m = findPartyMemberByName(s, nm);
+                    if (!m) {
+                        if (upd?.joined === true || upd?.join === true) {
+                            m = createMember(nm);
+                            s.party.members.push(m);
+                            notify("success", `${nm} joined the party!`, "Party", "party");
+                            partyChanged = true;
+                        } else {
+                            continue;
+                        }
+                    }
+
+                    ensurePartyMemberState(m);
+                    const changed = applyPartyMemberUpdate(m, upd);
+                    const laneChanged = (upd?.lane !== undefined && upd?.lane !== null) ? assignMemberToFormationLane(s, m, upd.lane) : false;
+                    if (changed || laneChanged) {
+                        partyChanged = true;
+                        maybeSyncCoreFromMember(m, nm);
+                    }
+                }
+            }
+
+            const formationRaw = (data.party.formation && typeof data.party.formation === "object")
+                ? ((data.party.formation.lanes && typeof data.party.formation.lanes === "object") ? data.party.formation.lanes : data.party.formation)
+                : null;
+
+            if (formationRaw) {
+                for (const lane of ["front", "mid", "back"]) {
+                    if (!Array.isArray(formationRaw[lane])) continue;
+                    const nextLaneIds = [];
+                    for (const rawRef of formationRaw[lane].slice(0, 24)) {
+                        const token = String(rawRef?.id || rawRef?.name || rawRef || "").trim();
+                        if (!token) continue;
+                        const byId = s.party.members.find((m) => String(m?.id || "") === token) || null;
+                        const member = byId || findPartyMemberByName(s, token);
+                        const id = String(member?.id || "");
+                        if (!id) continue;
+                        if (!nextLaneIds.includes(id)) nextLaneIds.push(id);
+                    }
+
+                    const prevLaneIds = Array.isArray(s.party.formation.lanes[lane]) ? s.party.formation.lanes[lane] : [];
+                    const changed = prevLaneIds.length !== nextLaneIds.length || prevLaneIds.some((id, i) => String(id || "") !== String(nextLaneIds[i] || ""));
+                    if (changed) {
+                        s.party.formation.lanes[lane] = nextLaneIds;
+                        partyChanged = true;
+                    }
+                }
+            }
+
+            const validIds = new Set(s.party.members.map((m) => String(m?.id || "")).filter(Boolean));
+            for (const lane of ["front", "mid", "back"]) {
+                const beforeLane = Array.isArray(s.party.formation.lanes[lane]) ? s.party.formation.lanes[lane] : [];
+                const afterLane = beforeLane.filter((id) => validIds.has(String(id || "")));
+                if (afterLane.length !== beforeLane.length) {
+                    s.party.formation.lanes[lane] = afterLane;
+                    partyChanged = true;
+                }
+            }
+
+            if (coreVitalsChanged) {
+                try { if (typeof $ !== "undefined") $(document).trigger("uie:updateVitals"); } catch (_) {}
+                try { window.dispatchEvent(new CustomEvent("uie:updateVitals")); } catch (_) {}
+            }
+
+            if (partyChanged || coreVitalsChanged) needsSave = true;
         }
 
         // 10. Equipped (User)
@@ -1117,37 +1855,83 @@ ${chatSnippet}
             }
         }
 
+        const afterCounts = {
+            items: Array.isArray(s?.inventory?.items) ? s.inventory.items.length : 0,
+            skills: Array.isArray(s?.inventory?.skills) ? s.inventory.skills.length : 0,
+            assets: Array.isArray(s?.inventory?.assets) ? s.inventory.assets.length : 0,
+            life: Array.isArray(s?.life?.trackers) ? s.life.trackers.length : 0,
+            quests: (() => { const j = s?.journal; if (!j) return 0; return (Array.isArray(j.pending) ? j.pending.length : 0) + (Array.isArray(j.active) ? j.active.length : 0) + (Array.isArray(j.completed) ? j.completed.length : 0) + (Array.isArray(j.abandoned) ? j.abandoned.length : 0); })(),
+            lore: Array.isArray(s?.databank) ? s.databank.length : 0,
+            party: Array.isArray(s?.party?.members) ? s.party.members.length : 0,
+            social: countSocialPeople(s),
+            phoneMsgs: countPhoneMsgs(s)
+        };
+        const summary = {
+            items: afterCounts.items - beforeCounts.items,
+            skills: afterCounts.skills - beforeCounts.skills,
+            assets: afterCounts.assets - beforeCounts.assets,
+            life: afterCounts.life - beforeCounts.life,
+            quests: afterCounts.quests - beforeCounts.quests,
+            lore: afterCounts.lore - beforeCounts.lore,
+            party: afterCounts.party - beforeCounts.party,
+            social: afterCounts.social - beforeCounts.social,
+            phoneMsgs: afterCounts.phoneMsgs - beforeCounts.phoneMsgs
+        };
+        try { window.UIE_lastScanSummary = { at: Date.now(), summary, needsSave }; } catch (_) {}
+        try {
+            if (force) {
+                const bits = [];
+                for (const [k, v] of Object.entries(summary)) {
+                    if (!Number(v)) continue;
+                    bits.push(`${k} ${v > 0 ? "+" : ""}${v}`);
+                }
+                notify("info", bits.length ? `Scan changes: ${bits.join(", ")}` : "Scan complete: no detected additions/changes.", "UIE", "scanSummary");
+            }
+        } catch (_) {}
+
+        try {
+            window.UIE_scanEverythingDedupe = {
+                sig: scanSig || readChatScanSignature(),
+                mesId: sourceMesId,
+                at: Date.now(),
+            };
+        } catch (_) {}
+
         if (needsSave) {
-            commitStateUpdate({ save: true, layout: true, emit: true });
+            commitStateUpdate({ save: true, layout: force === true, emit: true });
             if (sourceMesId !== null) {
                 const u = ensureUndoStore();
                 u.lastMesId = sourceMesId;
             }
         }
 
+        // Store per-message undo patch after scan completed.
+        try {
+            if (sourceMesId !== null && beforeSnap && undoFp) {
+                const afterSnap = snapshotScanTouchedState(getSettings());
+                const ops = diffSnapshots(beforeSnap, afterSnap);
+                const u = ensureUndoStore();
+                u.byFp[undoFp] = { at: Date.now(), mesId: sourceMesId, fp: undoFp, ops };
+                u.byMesId[String(sourceMesId)] = { at: Date.now(), fp: undoFp, ops };
+                try {
+                    const keys = Object.keys(u.byFp);
+                    if (keys.length > 120) {
+                        keys.sort((a, b) => Number(u.byFp[a]?.at || 0) - Number(u.byFp[b]?.at || 0));
+                        for (let i = 0; i < keys.length - 120; i++) delete u.byFp[keys[i]];
+                    }
+                } catch (_) {}
+            }
+        } catch (_) {}
+
+        return { ok: true, changed: needsSave, summary };
+
     } catch (e) {
         console.warn("UIE Unified Scan Parse Error:", e);
+        return { ok: false, error: String(e?.message || e || "Scan parse error") };
     }
     } finally {
         try { if (window.UIE_scanEverythingGate) window.UIE_scanEverythingGate.inFlight = false; } catch (_) {}
     }
-
-    // Store per-message undo patch after scan completed
-    try {
-        if (sourceMesId !== null && beforeSnap && undoFp) {
-            const afterSnap = snapshotScanTouchedState(getSettings());
-            const ops = diffSnapshots(beforeSnap, afterSnap);
-            const u = ensureUndoStore();
-            u.byFp[undoFp] = { at: Date.now(), mesId: sourceMesId, fp: undoFp, ops };
-            try {
-                const keys = Object.keys(u.byFp);
-                if (keys.length > 120) {
-                    keys.sort((a, b) => Number(u.byFp[a]?.at || 0) - Number(u.byFp[b]?.at || 0));
-                    for (let i = 0; i < keys.length - 120; i++) delete u.byFp[keys[i]];
-                }
-            } catch (_) {}
-        }
-    } catch (_) {}
 }
 
 /**
@@ -1226,7 +2010,15 @@ export async function initAutoScanning() {
                 try { window.UIE_autoScanLastRunAt = Date.now(); } catch (_) {}
                 // Debounce check: ensure we don't run if another scan started very recently
                 const now = Date.now();
-                if (window.UIE_scanEverythingGate && (now - (window.UIE_scanEverythingGate.lastAt || 0) < 2000)) return;
+                const min = (() => {
+                    try {
+                        const s = getSettings();
+                        return Math.max(1000, Number(s?.generation?.autoScanMinIntervalMs || 8000));
+                    } catch (_) {
+                        return 2000;
+                    }
+                })();
+                if (window.UIE_scanEverythingGate && (now - Number(window.UIE_scanEverythingGate.lastAt || 0) < min)) return;
                 
                 scanEverything({ sourceMesId: mesId }).catch((e) => {
                     try { window.UIE_autoScanLastError = String(e?.message || e || ""); } catch (_) {}
@@ -1263,7 +2055,7 @@ export async function initAutoScanning() {
                         const changed = applyUndoOps(s2, rec.ops);
                         delete u.byFp[deletedFp];
                         u.lastMesId = null;
-                        if (changed) commitStateUpdate({ save: true, layout: true, emit: true, undo: true, fp: deletedFp });
+                        if (changed) commitStateUpdate({ save: true, layout: false, emit: true, undo: true, fp: deletedFp });
                     }
                 }
 
@@ -1278,3 +2070,6 @@ export async function initAutoScanning() {
         try { initDomAutoScanningFallback(); } catch (_) {}
     } catch (_) {}
 }
+
+
+

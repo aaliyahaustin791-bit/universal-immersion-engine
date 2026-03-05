@@ -3,7 +3,7 @@ import { generateContent } from "./apiClient.js";
 import { getWorldState, scanEverything } from "./stateTracker.js";
 import { getContext } from "/scripts/extensions.js";
 import { injectRpEvent } from "./features/rp_log.js";
-import { parseJsonLoose, normalizeDatabankArrayInPlace, toDatabankDisplayEntries } from "./databankModel.js";
+import { parseJsonLoose, normalizeDatabankArrayInPlace, toDatabankDisplayEntries, addDatabankEntryWithDedupe } from "./databankModel.js";
 
 function esc(s) {
     return String(s ?? "")
@@ -58,9 +58,9 @@ function ensureDatabank(s) {
 }
 
 function ensureSocial(s) {
-    if (!s.social) s.social = { friends: [], romance: [], family: [], rivals: [] };
-    ["friends", "romance", "family", "rivals"].forEach(k => { if (!Array.isArray(s.social[k])) s.social[k] = []; });
-    ["friends", "romance", "family", "rivals"].forEach(k => {
+    if (!s.social) s.social = { friends: [], associates: [], romance: [], family: [], rivals: [] };
+    ["friends", "associates", "romance", "family", "rivals"].forEach(k => { if (!Array.isArray(s.social[k])) s.social[k] = []; });
+    ["friends", "associates", "romance", "family", "rivals"].forEach(k => {
         (s.social[k] || []).forEach(p => {
             if (!p || typeof p !== "object") return;
             if (!p.id) p.id = newId("person");
@@ -72,6 +72,55 @@ function ensureSocial(s) {
 let dbSocialActivePersonId = "";
 let dbRenderLimit = 60;
 let dbLastListSig = "";
+
+function normalizeNameKey(name) {
+    return String(name || "").trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function escapeRegExp(str) {
+    return String(str || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function getSocialNameIndex(s) {
+    ensureSocial(s);
+    const byKey = new Map();
+    for (const k of ["friends", "associates", "romance", "family", "rivals"]) {
+        for (const p of (s.social[k] || [])) {
+            const name = String(p?.name || "").trim();
+            const key = normalizeNameKey(name);
+            const id = String(p?.id || "").trim();
+            if (!name || !key || !id) continue;
+            if (!byKey.has(key)) byKey.set(key, { id, name, tab: k });
+        }
+    }
+    const list = Array.from(byKey.values())
+        .sort((a, b) => b.name.length - a.name.length)
+        .slice(0, 180);
+    return { byKey, list };
+}
+
+function extractMentionedSocialPeople(text, socialIndex) {
+    const src = String(text || "");
+    if (!src) return [];
+    const list = Array.isArray(socialIndex?.list) ? socialIndex.list : [];
+    if (!list.length) return [];
+    const hits = [];
+    for (const person of list) {
+        if (hits.length >= 6) break;
+        const name = String(person?.name || "").trim();
+        if (!name) continue;
+        const key = normalizeNameKey(name);
+        if (!key) continue;
+        const pattern = `\\b${escapeRegExp(key).replace(/\\\s+/g, "\\\\s+")}\\b`;
+        try {
+            if (!new RegExp(pattern, "i").test(src.toLowerCase())) continue;
+        } catch (_) {
+            if (!src.toLowerCase().includes(key)) continue;
+        }
+        hits.push(person);
+    }
+    return hits;
+}
 
 export function initDatabank() {
     const doc = $(document);
@@ -133,8 +182,8 @@ Output JSON: { "title": "Specific Title", "summary": "Detailed summary..." }`;
             const s = getSettings();
             ensureDatabank(s);
 
-            const now = Date.now();
-            s.databank.push({ id: newId("db"), created: now, date: new Date(now).toLocaleDateString(), title: String(data.title || "Memory").trim().slice(0, 80), summary: String(data.summary || "").trim() });
+            const opts = { now: Date.now(), makeId: () => newId("db") };
+            addDatabankEntryWithDedupe(s.databank, { title: data.title || "Memory", summary: data.summary || "" }, opts);
             saveSettings();
             render();
             if(window.toastr) toastr.success("Memory Archived");
@@ -172,6 +221,16 @@ Output JSON: { "title": "Specific Title", "summary": "Detailed summary..." }`;
     });
 
     doc.off("click.uieDbSocialOpen").on("click.uieDbSocialOpen", ".uie-db-social-row", function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        const pid = String($(this).data("pid") || "");
+        if (!pid) return;
+        dbSocialActivePersonId = pid;
+        $("#uie-db-social-mem-overlay").show();
+        renderSocialMemoriesModal();
+    });
+
+    doc.off("click.uieDbSocialLink").on("click.uieDbSocialLink", ".uie-db-social-link", function (e) {
         e.preventDefault();
         e.stopPropagation();
         const pid = String($(this).data("pid") || "");
@@ -252,7 +311,7 @@ function getSocialPersonById(personId) {
     ensureSocial(s);
     const pid = String(personId || "");
     if (!pid) return { s, person: null };
-    for (const k of ["friends", "romance", "family", "rivals"]) {
+    for (const k of ["friends", "associates", "romance", "family", "rivals"]) {
         const hit = (s.social[k] || []).find(p => String(p?.id || "") === pid);
         if (hit) return { s, person: hit };
     }
@@ -268,7 +327,7 @@ function renderSocialProfiles() {
     list.innerHTML = "";
 
     const rows = [];
-    for (const k of ["friends", "romance", "family", "rivals"]) {
+    for (const k of ["friends", "associates", "romance", "family", "rivals"]) {
         for (const p of (s.social[k] || [])) {
             const name = String(p?.name || "").trim();
             if (!name) continue;
@@ -283,23 +342,36 @@ function renderSocialProfiles() {
     }
 
     const tmpl = document.getElementById("uie-template-db-social-row");
-    if (!tmpl) return;
 
     const frag = document.createDocumentFragment();
     for (const row of rows) {
         const memCount = Array.isArray(row.p?.memories) ? row.p.memories.length : 0;
-        const clone = tmpl.content.cloneNode(true);
-        const el = clone.querySelector(".uie-db-social-row");
-        const nameEl = clone.querySelector(".social-name");
-        const relEl = clone.querySelector(".social-rel");
-        const countEl = clone.querySelector(".social-count");
+        if (tmpl && tmpl.content) {
+            const clone = tmpl.content.cloneNode(true);
+            const el = clone.querySelector(".uie-db-social-row");
+            const nameEl = clone.querySelector(".social-name");
+            const relEl = clone.querySelector(".social-rel");
+            const countEl = clone.querySelector(".social-count");
+            if (!el || !nameEl || !relEl || !countEl) continue;
 
-        el.dataset.pid = esc(String(row.p.id || ""));
-        nameEl.textContent = esc(row.name);
-        relEl.textContent = esc(row.k.toUpperCase());
-        countEl.textContent = `${memCount} mem`;
+            el.dataset.pid = String(row.p.id || "");
+            nameEl.textContent = row.name;
+            relEl.textContent = row.k.toUpperCase();
+            countEl.textContent = `${memCount} mem`;
+            frag.appendChild(clone);
+            continue;
+        }
 
-        frag.appendChild(clone);
+        const el = document.createElement("div");
+        el.className = "uie-db-social-row";
+        el.dataset.pid = String(row.p.id || "");
+        el.style.cssText = "display:flex;align-items:center;gap:10px;background:rgba(0,240,255,0.05);border:1px solid rgba(0,240,255,0.24);border-radius:8px;padding:10px 12px;cursor:pointer;margin-bottom:8px;";
+        el.innerHTML = `
+            <div class="social-name" style="font-weight:900;color:#fff;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(row.name)}</div>
+            <div class="social-rel" style="font-size:10px;color:rgba(0,240,255,0.8);border:1px solid rgba(0,240,255,0.25);padding:2px 8px;border-radius:999px;letter-spacing:0.6px;">${esc(row.k.toUpperCase())}</div>
+            <div class="social-count" style="font-size:11px;color:rgba(255,255,255,0.7);">${memCount} mem</div>
+        `;
+        frag.appendChild(el);
     }
     list.appendChild(frag);
 }
@@ -426,6 +498,7 @@ function render() {
     try { ensureChatStateLoaded(); } catch (_) {}
     const s = getSettings();
     ensureDatabank(s);
+    ensureSocial(s);
     const list = $("#uie-db-list");
     if (!list.length) {
         setTimeout(() => { try { render(); } catch (_) {} }, 160);
@@ -455,12 +528,17 @@ function render() {
     }
 
     const shown = entries.slice(-1 * Math.max(1, Math.min(dbRenderLimit, entries.length))).reverse();
+    const socialIndex = getSocialNameIndex(s);
     const html = [];
     for (const m of shown) {
         const title = String(m?.title || "Entry").trim() || "Entry";
         const body = String(m?.body || "").trim();
         const date = String(m?.date || "").trim();
         const tag = m?.type === "lore" ? "LORE" : "MEMORY";
+        const mentionedPeople = extractMentionedSocialPeople(`${title}\n${body}`, socialIndex);
+        const mentionHtml = mentionedPeople.length
+            ? `<div style="margin-top:8px; display:flex; gap:6px; flex-wrap:wrap;">${mentionedPeople.map((p) => `<span class="uie-db-social-link" data-pid="${esc(String(p.id || ""))}" style="font-size:10px; color:#9ff; border:1px solid rgba(0,240,255,0.28); background:rgba(0,240,255,0.08); border-radius:999px; padding:2px 8px; cursor:pointer;">${esc(p.name)}</span>`).join("")}</div>`
+            : "";
         html.push(`
             <div style="background:rgba(0, 240, 255, 0.05); border:1px solid rgba(0,240,255,0.3); border-radius:6px; padding:12px; position:relative; margin-bottom:10px;">
                 <div style="display:flex; align-items:flex-start; gap:8px;">
@@ -471,6 +549,7 @@ function render() {
                     </div>
                 </div>
                 <div style="font-size:12px; color:rgba(255,255,255,0.88); line-height:1.45; white-space:pre-wrap; word-break:break-word;">${esc(body || "(empty)")}</div>
+                ${mentionHtml}
                 <i class="fa-solid fa-trash db-delete" data-id="${esc(String(m.id || ""))}" style="position:absolute; bottom:10px; right:10px; color:#ff3b30; cursor:pointer; font-size:12px; opacity:0.7;"></i>
             </div>
         `);

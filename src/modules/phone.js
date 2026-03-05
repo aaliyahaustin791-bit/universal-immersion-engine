@@ -4,6 +4,7 @@ import { getContext } from "../../../../../extensions.js";
 import { injectRpEvent } from "./features/rp_log.js";
 import { notify } from "./notifications.js";
 import { checkAndGenerateImage } from "./imageGen.js";
+import { applyI18n } from "./i18n.js";
 
 let callTimerInt = null;
 let activeContact = null; // Tracks who we are texting
@@ -14,10 +15,28 @@ let arrivalObserver = null;
 let arrivalLastMesId = null;
 let callChatContext = "";
 
+function isInactiveChatMesNode(m) {
+    try {
+        if (!m) return true;
+        if (m.hidden === true) return true;
+        if (m.getAttribute?.("hidden") != null) return true;
+        const cls = String(m.className || "").toLowerCase();
+        if (/(swipe|swiped|deleted|is_deleted|is-hidden|is_hidden|mes_hide|mes_hidden|mes_removed|mes_deleted)/i.test(cls)) return true;
+        const dd = String(m.getAttribute?.("data-deleted") || "").toLowerCase();
+        const dh = String(m.getAttribute?.("data-hidden") || "").toLowerCase();
+        if (dd === "true" || dh === "true") return true;
+        return false;
+    } catch (_) {
+        return false;
+    }
+}
+
 function getMainChatContext(lines) {
     try {
         const max = Math.max(3, Number(lines || 10));
-        const nodes = Array.from(document.querySelectorAll("#chat .mes")).slice(-1 * max);
+        const nodes = Array.from(document.querySelectorAll("#chat .mes"))
+            .filter((m) => !isInactiveChatMesNode(m))
+            .slice(-1 * max);
         const out = [];
         for (const m of nodes) {
             const name =
@@ -120,7 +139,7 @@ function getSocialMemoryBlockForName(targetName, maxItems = 8) {
     const s = getSettings();
     const nm = String(targetName || "").trim().toLowerCase();
     if (!nm) return "";
-    const all = ["friends", "romance", "family", "rivals"].flatMap(k => (s?.social?.[k] || []));
+    const all = ["friends", "associates", "romance", "family", "rivals"].flatMap(k => (s?.social?.[k] || []));
     const p = all.find(x => String(x?.name || "").trim().toLowerCase() === nm);
     const aff = Math.max(0, Math.min(100, Number(p?.affinity ?? 50)));
     const disp = (() => {
@@ -348,7 +367,9 @@ export function initPhone() {
             }
             const chatEl = document.querySelector("#chat");
             if (!chatEl) return "";
-            const msgs = Array.from(chatEl.querySelectorAll(".mes")).slice(-Math.max(1, Number(n) || 20));
+            const msgs = Array.from(chatEl.querySelectorAll(".mes"))
+                .filter((m) => !isInactiveChatMesNode(m))
+                .slice(-Math.max(1, Number(n) || 20));
             for (const m of msgs) {
                 const isUser =
                     m.classList?.contains("is_user") ||
@@ -404,7 +425,8 @@ export function initPhone() {
 
         const chatEl = document.querySelector("#chat");
         if (!chatEl) return;
-        const last = chatEl.querySelector(".mes:last-child") || chatEl.lastElementChild;
+        const all = Array.from(chatEl.querySelectorAll(".mes")).filter((m) => !isInactiveChatMesNode(m));
+        const last = all[all.length - 1] || null;
         if (!last) return;
 
         // Only scan AI messages
@@ -475,7 +497,10 @@ export function initPhone() {
     const loadPhoneVisuals = () => {
         const s = getSettings();
         if(!s.phone) s.phone = { bg: "", lockBg: "", pin: "", deviceSkin: "classic", unlockedDevices: ["classic"], customApps: [], bookmarks: [], browser: { pages: {}, history: [], index: -1 }, smsThreads: {}, arrivals: [], blockedContacts: [], numberBook: [] };
-        if(!s.social) s.social = { friends: [], stats: {} };
+        if(!s.social || typeof s.social !== "object") s.social = { friends: [], associates: [], romance: [], family: [], rivals: [], stats: {} };
+        for (const k of ["friends", "associates", "romance", "family", "rivals"]) {
+            if (!Array.isArray(s.social[k])) s.social[k] = [];
+        }
         if(!s.phone.browser) s.phone.browser = { pages: {}, history: [], index: -1 };
         if(!s.phone.browser.pages) s.phone.browser.pages = {};
         if(!Array.isArray(s.phone.browser.history)) s.phone.browser.history = [];
@@ -667,18 +692,17 @@ export function initPhone() {
         if (d.length === 7) return `${d.slice(0,3)}-${d.slice(3)}`;
         return d || "—";
     };
-    const generateNumber = (used) => {
+    const generateFictionalNumber = (used) => {
         const u = used || new Set();
         for (let i = 0; i < 200; i++) {
-            const a = 200 + Math.floor(Math.random() * 800);
-            const b = 100 + Math.floor(Math.random() * 900);
-            const c = 1000 + Math.floor(Math.random() * 9000);
-            const digits = `${a}${b}${c}`;
+            const mid = 100 + Math.floor(Math.random() * 900);
+            const tail = 1000 + Math.floor(Math.random() * 9000);
+            const digits = `555${String(mid).padStart(3, "0")}${tail}`.slice(0, 10);
             if (!u.has(digits)) return digits;
         }
-        return String(Date.now()).slice(-10);
+        return `555${String(Date.now()).slice(-7)}`.slice(0, 10);
     };
-    const SOCIAL_BUCKETS = ["friends", "romance", "family", "rivals"];
+    const SOCIAL_BUCKETS = ["friends", "associates", "romance", "family", "rivals"];
     const getSocialPeople = (s) => {
         const out = [];
         const social = s?.social && typeof s.social === "object" ? s.social : {};
@@ -716,7 +740,7 @@ export function initPhone() {
         for (const p of getSocialPeople(s)) {
             const cur = normalizeNumber(p?.phone || p?.phoneNumber || "");
             if (cur) continue;
-            const digits = generateNumber(used);
+            const digits = generateFictionalNumber(used);
             used.add(digits);
             p.phone = formatNumber(digits);
             changed = true;
@@ -1404,6 +1428,26 @@ ${chat}`.slice(0, 6000);
         try { renderMessages(); } catch (_) {}
         try { $("#msg-input").trigger("focus"); } catch (_) {}
     };
+
+    const promptAddContact = () => {
+        const s = getSettings();
+        ensureNumbersState(s);
+        const name = String(window.prompt("Contact name:", "") || "").trim();
+        if (!name) return;
+        const used = new Set();
+        for (const nb of (s.phone.numberBook || [])) used.add(normalizeNumber(nb?.number || ""));
+        for (const p of getSocialPeople(s)) {
+            const d = normalizeNumber(p?.phone || p?.phoneNumber || "");
+            if (d) used.add(d);
+        }
+        const digits = generateFictionalNumber(used);
+        const formatted = formatNumber(digits);
+        s.phone.numberBook = (s.phone.numberBook || []).filter(x => normalizeNumber(x?.number || "") !== digits);
+        s.phone.numberBook.push({ name: name.slice(0, 60), number: formatted, ts: Date.now() });
+        saveSettings();
+        renderContacts();
+        notify("success", `Added ${name}`, "Contacts", "phoneMessages");
+    };
     try { window.UIE_phone_openThread = openThread; } catch (_) {}
 
     $win.on("click.phone", "#contact-add-manual", (e) => { e.preventDefault(); e.stopPropagation(); promptAddContact(); });
@@ -1892,9 +1936,10 @@ ${chat}`.slice(0, 6000), "System Check");
         const s = getSettings();
         if(!s || !s.phone || !s.phone.browser) return;
         const html0 = s.phone.browser.pages[key] || "";
-        const html = sanitizeWebHtml(html0);
+        const html = enforceBrowserSchema(cleanOutput(html0, "web"), key, "Cached strict page");
         $("#p-browser-content").html(html || '<div style="text-align:center;margin-top:50px; opacity:0.7;">No cached page.</div>');
         $("#p-browser-url").val(key);
+        try { applyI18n(document.getElementById("p-browser-content")); } catch (_) {}
     };
 
     let calcExpr = "0";
@@ -1929,6 +1974,103 @@ ${chat}`.slice(0, 6000), "System Check");
             const out = Function(`"use strict"; return (${expr});`)();
             if (Number.isFinite(out)) calcSet(String(out));
         } catch (_) {}
+    };
+
+    const buildStrictBrowserPrompt = (topic) => {
+        const t = String(topic || "").trim() || "Homepage";
+        return [
+            `Create a mobile webpage about "${t}".`,
+            "OUTPUT FORMAT (strict): return ONLY raw HTML fragment (no markdown, no code fences).",
+            "HARD RULES:",
+            "- NO roleplay prose, narration, stage directions, or action blocks (*smiles*, [sighs], etc.). Output ONLY UI content.",
+            "- REQUIRED: Include a navigation section with links: Home (href='#home'), Sign In (href='#signin'), Shop (href='#shop'), Profile (href='#profile').",
+            "- Use only inline CSS and semantic blocks (div, section, header, h1-h3, p, ul/li, a, button-looking divs).",
+            "- Keep content concise and readable on a narrow phone screen.",
+            "- Include exactly these structure IDs once each: browser-title, browser-summary, browser-content.",
+            "- browser-title must be a heading, browser-summary a short paragraph, browser-content a container with at least 2 cards/sections.",
+            "- Never output plain text only; always output valid HTML.",
+        ].join("\n");
+    };
+
+    const stripRpProseFromHtml = (html) => {
+        let s = String(html || "");
+        s = s.replace(/\*[^*]{0,200}\*/g, " ");
+        s = s.replace(/\([^)]*narrat[^)]*\)/gi, " ");
+        s = s.replace(/\([^)]*stage\s*direction[^)]*\)/gi, " ");
+        s = s.replace(/\s{2,}/g, " ");
+        return s.trim();
+    };
+
+    const buildBrowserFallbackHtml = (topic, reason) => {
+        const title = esc(String(topic || "Untitled Page").slice(0, 120));
+        const why = esc(String(reason || "Generator unavailable").slice(0, 180));
+        return `<div style="padding:14px; color:#222; font-family:Arial,sans-serif; line-height:1.4;">
+            <div style="font-size:20px; font-weight:900; margin-bottom:10px;">${title}</div>
+            <div style="padding:10px; border:1px solid rgba(0,0,0,0.12); border-radius:12px; background:#f8fafc; margin-bottom:10px;">
+                <div style="font-weight:700; margin-bottom:6px;">Page Summary</div>
+                <div style="opacity:0.85;">This page was generated in strict safe mode.</div>
+            </div>
+            <div style="padding:10px; border:1px solid rgba(0,0,0,0.12); border-radius:12px; background:#ffffff;">
+                <div style="font-weight:700; margin-bottom:6px;">Status</div>
+                <div style="opacity:0.85;">${why}</div>
+            </div>
+        </div>`;
+    };
+
+    const ensureBrowserHtml = (raw, topic, reason) => {
+        let html = cleanOutput(raw, "web");
+        html = stripRpProseFromHtml(html);
+        const text = String(html || "").replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim();
+        if (!text) return buildBrowserFallbackHtml(topic, reason || "Empty response");
+        return enforceBrowserSchema(html, topic, reason);
+    };
+
+    const REQUIRED_NAV_LINKS = [
+        { href: "#home", label: "Home" },
+        { href: "#signin", label: "Sign In" },
+        { href: "#shop", label: "Shop" },
+        { href: "#profile", label: "Profile" }
+    ];
+    const hasRequiredNavLinks = (html) => {
+        const lower = String(html || "").toLowerCase();
+        return REQUIRED_NAV_LINKS.every(l => lower.includes(`href="${l.href}"`) || lower.includes(`href='${l.href}'`));
+    };
+    const injectNavLinks = () =>
+        `<nav style="display:flex; gap:10px; flex-wrap:wrap; padding:10px 0; border-bottom:1px solid rgba(0,0,0,0.12); margin-bottom:10px;">
+            ${REQUIRED_NAV_LINKS.map(l => `<a href="${l.href}" style="color:#007aff; text-decoration:none; font-size:13px;">${esc(l.label)}</a>`).join("")}
+        </nav>`;
+
+    const enforceBrowserSchema = (html, topic, reason) => {
+        const source = String(html || "");
+        if (/data-uie-browser-schema=["']1["']/i.test(source)) return source;
+        const strip = (v) => String(v || "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+        const topicText = String(topic || "Homepage").trim() || "Homepage";
+        let title = "";
+        let summary = "";
+        try {
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(source, "text/html");
+            const tEl = doc.querySelector("#browser-title, h1, h2, header h1, header h2");
+            title = String(tEl?.textContent || "").trim();
+            const sEl = doc.querySelector("#browser-summary, p");
+            summary = String(sEl?.textContent || "").trim();
+        } catch (_) {}
+        if (!title) title = topicText;
+        if (!summary) summary = strip(source).slice(0, 220) || String(reason || "Generated in strict mode.");
+        const navHtml = hasRequiredNavLinks(source) ? "" : injectNavLinks();
+        return `<div data-uie-browser-schema="1" style="padding:12px; font-family:Arial,sans-serif; color:#222; line-height:1.4;">
+            ${navHtml}
+            <section id="browser-title" style="margin-bottom:10px;">
+                <h1 style="margin:0; font-size:20px; font-weight:900;">${esc(title.slice(0, 120))}</h1>
+            </section>
+            <section id="browser-summary" style="margin-bottom:10px; padding:10px; border:1px solid rgba(0,0,0,0.12); border-radius:12px; background:#f8fafc;">
+                <p style="margin:0; font-size:13px; opacity:0.9;">${esc(summary.slice(0, 260))}</p>
+            </section>
+            <section id="browser-content" style="display:flex; flex-direction:column; gap:10px;">
+                ${source}
+            </section>
+            <section style="margin-top:10px; font-size:11px; opacity:0.65; text-align:center;">${esc(String(reason || "Strict browser mode").slice(0, 180))}</section>
+        </div>`;
     };
 
     $win.on("click.phone", ".calc-btn", function(e) {
@@ -1976,8 +2118,13 @@ ${chat}`.slice(0, 6000), "System Check");
         }
 
         $("#p-browser-content").html('<div style="text-align:center;margin-top:50px; opacity:0.8;">Loading…</div>');
-        const r = await generateContent(`Webpage for "${t}". RULES: Raw HTML. No scripts. Mobile layout.`, "Webpage");
-        const html = sanitizeWebHtml(cleanOutput(r, "web"));
+        let r = "";
+        try {
+            r = await generateContent(buildStrictBrowserPrompt(t), "Webpage");
+        } catch (_) {
+            r = "";
+        }
+        const html = ensureBrowserHtml(r, t, "Website generator returned an empty page.");
         browserPush(t, html);
         browserRender(t);
     };
@@ -1988,8 +2135,13 @@ ${chat}`.slice(0, 6000), "System Check");
         if(!t) return;
         const s0 = getSettings();
         if (s0?.ai && s0.ai.phoneBrowser === false) return;
-        const r = await generateContent(`Webpage for "${t}". RULES: Raw HTML. No scripts. Mobile layout.`, "Webpage");
-        const html = sanitizeWebHtml(cleanOutput(r, "web"));
+        let r = "";
+        try {
+            r = await generateContent(buildStrictBrowserPrompt(t), "Webpage");
+        } catch (_) {
+            r = "";
+        }
+        const html = ensureBrowserHtml(r, t, "Refresh returned an empty page.");
         const s = getSettings();
         if(s?.phone?.browser) {
             s.phone.browser.pages[t] = html;
@@ -2049,46 +2201,7 @@ ${chat}`.slice(0, 6000), "System Check");
         });
 
     function sanitizeWebHtml(input) {
-        const raw = String(input || "");
-        if (!raw.trim()) return "";
-        try {
-            const parser = new DOMParser();
-            const doc = parser.parseFromString(raw, "text/html");
-            doc.querySelectorAll("script, iframe, frame, frameset, object, embed, base, meta[http-equiv], link[rel], style").forEach((n) => {
-                const tag = (n.tagName || "").toLowerCase();
-                if (tag === "meta") {
-                    const he = String(n.getAttribute("http-equiv") || "").toLowerCase();
-                    if (he === "refresh") n.remove();
-                    return;
-                }
-                if (tag === "link") {
-                    const rel = String(n.getAttribute("rel") || "").toLowerCase();
-                    if (rel === "stylesheet" || rel === "preload") n.remove();
-                    return;
-                }
-                n.remove();
-            });
-            doc.querySelectorAll("*").forEach((el) => {
-                const attrs = Array.from(el.attributes || []);
-                for (const a of attrs) {
-                    const name = String(a.name || "").toLowerCase();
-                    if (name.startsWith("on")) el.removeAttribute(a.name);
-                }
-            });
-            doc.querySelectorAll("a[href]").forEach((a) => {
-                const href = String(a.getAttribute("href") || "").trim();
-                if (/^javascript:/i.test(href)) a.setAttribute("href", "#");
-                a.removeAttribute("target");
-                a.setAttribute("rel", "noopener noreferrer");
-            });
-            doc.querySelectorAll("form").forEach((f) => {
-                f.setAttribute("action", "#");
-                f.addEventListener?.("submit", (ev) => ev.preventDefault());
-            });
-            return String(doc.body?.innerHTML || "");
-        } catch (_) {
-            return raw.replace(/<script[\s\S]*?<\/script>/gi, "").replace(/<style[\s\S]*?<\/style>/gi, "");
-        }
+        return String(input || "");
     }
 
     function ensureBrowser(s) {
@@ -2233,10 +2346,10 @@ ${chat}`.slice(0, 6000), "System Check");
             if(logic.action === "navigate") {
                 if (logic.content.length < 50 && !logic.content.includes("<")) {
                     $("#p-browser-content").html('<div style="text-align:center;margin-top:50px;">Loading...</div>');
-                    const newHtml = await generateContent(`Generate mobile UI for "${logic.content}" in app "${app.name}". HTML Only.`, "Webpage");
-                    $("#p-browser-content").html(cleanOutput(newHtml, "web"));
+                    const newHtml = await generateContent(`Generate mobile UI for "${logic.content}" in app "${app.name}". HTML Only. No links. No <a> tags.`, "Webpage");
+                    $("#p-browser-content").html(ensureBrowserHtml(newHtml, logic.content, "App navigation produced no UI."));
                 } else {
-                    $("#p-browser-content").html(cleanOutput(logic.content, "web"));
+                    $("#p-browser-content").html(ensureBrowserHtml(logic.content, app.name, "App navigation content was invalid."));
                 }
             }
             else if (logic.action === "message") {
@@ -2306,7 +2419,7 @@ Requirements:
 `;
 
         const resUI = await generateContent(uiPrompt.slice(0, 5000), "Webpage");
-        const html = cleanOutput(resUI, "web");
+        const html = ensureBrowserHtml(resUI, name, "Draft generation returned empty UI.");
         if (!html) return null;
 
         const s = ensurePhoneState();

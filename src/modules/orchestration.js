@@ -15,8 +15,51 @@ export async function scanAll() {
     try {
         notify("info", "Starting Full UIE Scan...", "Scanner");
         console.log("[UIE] Starting manual scanAll...");
+        let scanResult = null;
 
-        let itemsFound = 0;
+        const refreshAllModules = async () => {
+            const runners = [
+                async () => { const m = await import("./inventory.js"); m.updateVitals?.(); m.applyInventoryUi?.(); m.initInventory?.(); },
+                async () => { const m = await import("./features/items.js"); m.render?.(); m.init?.(); },
+                async () => { const m = await import("./features/skills.js"); m.render?.(); m.init?.(); },
+                async () => { const m = await import("./features/assets.js"); m.render?.(); m.init?.(); },
+                async () => { const m = await import("./features/life.js"); m.render?.(); m.init?.(); },
+                async () => { const m = await import("./features/equipment.js"); m.render?.(); m.init?.(); },
+                async () => { const m = await import("./world.js"); m.initWorld?.(); m.render?.(); },
+                async () => { const m = await import("./map.js"); m.render?.(); m.initMap?.(); },
+                async () => { const m = await import("./party.js"); m.render?.(); m.initParty?.(); },
+                async () => { const m = await import("./social.js"); m.render?.(); m.initSocial?.(); },
+                async () => { const m = await import("./battle.js"); m.render?.(); m.initBattle?.(); },
+                async () => { const m = await import("./journal.js"); m.render?.(); m.initJournal?.(); },
+                async () => { const m = await import("./diary.js"); m.render?.(); m.initDiary?.(); },
+                async () => { const m = await import("./databank.js"); m.render?.(); m.initDatabank?.(); },
+                async () => { const m = await import("./phone.js"); m.render?.(); m.initPhone?.(); },
+                async () => { const m = await import("./features/activities.js"); m.render?.(); m.initActivities?.(); },
+                async () => { const m = await import("./stats.js"); m.render?.(); m.initStats?.(); },
+                async () => { const m = await import("./shop.js"); m.render?.(); m.initShop?.(); }
+            ];
+            for (const run of runners) {
+                try { await run(); } catch (_) {}
+            }
+        };
+
+        // 0. Run the main unified scanner first (force bypasses scan gates)
+        try {
+            const { scanEverything } = await import("./stateTracker.js");
+            scanResult = await scanEverything({ force: true });
+            notify("success", "State scan complete", "Scanner");
+            try {
+                const sum = scanResult?.summary || null;
+                if (sum) {
+                    const bits = Object.entries(sum).filter(([, v]) => Number(v)).map(([k, v]) => `${k} ${v > 0 ? "+" : ""}${v}`);
+                    if (bits.length) notify("info", `AI changes: ${bits.join(", ")}`, "Scanner");
+                    else notify("info", "AI scan found no new module changes.", "Scanner");
+                }
+            } catch (_) {}
+        } catch (e) {
+            console.warn("[UIE] stateTracker scan failed", e);
+            notify("warning", "State scan partially failed", "Scanner");
+        }
 
         // 1. Scan Scavenge/Loot (if enabled)
         try {
@@ -68,6 +111,11 @@ export async function scanAll() {
         try {
             const { updateLayout } = await import("./core.js");
             updateLayout();
+            try {
+                await refreshAllModules();
+                const ev = new CustomEvent("uie:state_updated", { detail: { scanAll: true, force: true, forceAll: true, summary: scanResult?.summary || null } });
+                window.dispatchEvent(ev);
+            } catch (_) {}
         } catch (_) {}
 
         notify("success", "Full System Scan Complete. All modules synchronized.", "Scanner");

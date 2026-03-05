@@ -1,4 +1,4 @@
-import { getSettings, commitStateUpdate } from "./core.js";
+﻿import { getSettings, commitStateUpdate } from "./core.js";
 import { generateContent } from "./apiClient.js";
 import { getContext } from "/scripts/extensions.js";
 import { notify } from "./notifications.js";
@@ -282,7 +282,7 @@ function renderMemoryOverlay() {
     if (!person) return;
     const ctx = getContext ? getContext() : {};
     const user = String(ctx?.name1 || "User");
-    $("#uie-social-mem-sub").text(`${person.name} ↔ ${user}`);
+    $("#uie-social-mem-sub").text(`${person.name} â†” ${user}`);
 
     const list = Array.isArray(person.memories) ? person.memories.slice() : [];
     list.sort((a, b) => Number(b?.t || 0) - Number(a?.t || 0));
@@ -303,7 +303,7 @@ function renderMemoryOverlay() {
         const tags = Array.isArray(mem?.tags) ? mem.tags.map(t => String(t || "").trim()).filter(Boolean).slice(0, 6) : [];
 
         const el = $(rowTmpl.cloneNode(true));
-        el.find(".mem-text").text(text || "—");
+        el.find(".mem-text").text(text || "â€”");
 
         if (impact) {
             el.find(".mem-impact").html(`<strong>Impact:</strong> ${esc(impact)}`);
@@ -349,8 +349,8 @@ Return ONLY valid JSON (no markdown, no extra keys):
 Rules:
 - 3 to 8 memories max. If none, return {"memories":[]}.
 - Each memory must be a durable fact that CHANGED something: trust, fear, loyalty, obligation, romance, rivalry, plans, secrets, injuries, promises, betrayals, gifts, major discoveries.
-- No trivial entries (no greetings, walking in, “they talked”, generic vibes).
-- Be specific and consequence-based. 1–2 sentences per memory.
+- No trivial entries (no greetings, walking in, â€œthey talkedâ€, generic vibes).
+- Be specific and consequence-based. 1â€“2 sentences per memory.
 - Tags are short (e.g., "promise", "betrayal", "injury", "secret", "favor", "trauma", "trust").`;
 
     try { window.toastr?.info?.("Scanning memories..."); } catch (_) {}
@@ -496,7 +496,7 @@ function openProfile(index, anchorEl) {
     $("#p-val-loc").text(person.location || "Unknown");
     $("#p-val-age").text(person.age || "Unknown");
     $("#p-val-family").text(person.knownFamily || "Unknown");
-    $("#p-val-family-role").text(person.familyRole || "—");
+    $("#p-val-family-role").text(person.familyRole || "â€”");
     const affNum = Math.max(0, Math.min(100, Number(person.affinity ?? 50)));
     const disp = (() => {
         if (affNum <= 10) return "Hostile";
@@ -507,7 +507,7 @@ function openProfile(index, anchorEl) {
         if (affNum <= 90) return "Friendly";
         return "Devoted";
     })();
-    $("#p-val-rel-status").text(`${person.relationshipStatus || "—"} (${disp}, ${affNum}/100)`);
+    $("#p-val-rel-status").text(`${person.relationshipStatus || "â€”"} (${disp}, ${affNum}/100)`);
     try {
         const pres = person.met_physically === true ? "Present / met in scene" : (person.known_from_past === true ? "Known from the past (not present)" : "Mentioned only");
         $("#p-val-presence").text(pres);
@@ -529,7 +529,7 @@ function openProfile(index, anchorEl) {
         const empty = `<img src="${heartIcon}" style="width:24px; height:24px; object-fit:contain; vertical-align:middle; margin-right:2px; opacity:0.25; filter:grayscale(1);">`.repeat(emptyCount);
         $(".uie-p-hearts-lg").html(filled + empty);
     } else {
-        const hearts = "❤".repeat(filledCount) + "♡".repeat(emptyCount);
+        const hearts = "â¤".repeat(filledCount) + "â™¡".repeat(emptyCount);
         $(".uie-p-hearts-lg").text(hearts);
     }
 
@@ -745,14 +745,64 @@ function extractTaggedNamesFromChatText(maxMessages) {
     return Array.from(names);
 }
 
+function normalizeNameKey(name) {
+    return String(name || "").trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function isLikelyToolOrMetaCardName(name) {
+    const raw = String(name || "").trim();
+    if (!raw) return true;
+    const key = normalizeNameKey(raw)
+        .replace(/^[\[{(<\s]+|[\]})>\s]+$/g, "")
+        .trim();
+    if (!key) return true;
+
+    const exact = new Set([
+        "system",
+        "narrator",
+        "story",
+        "story narrator",
+        "game",
+        "game master",
+        "gm",
+        "assistant",
+        "omniscient",
+        "omniscent",
+        "metadata",
+        "meta",
+        "tool",
+        "tool card",
+        "npc tool",
+        "npc controller",
+        "director",
+        "story director",
+        "lorebook",
+        "author note",
+        "author's note",
+        "a/n",
+        "an",
+        "ooc",
+        "ic",
+    ]);
+    if (exact.has(key)) return true;
+
+    if (/^(meta|metadata|ooc|system|narrator|story|tool|gm|game master)\b/.test(key)) return true;
+    if (/\b(omniscient|omniscent|tool\s*card|npc\s*tool|metadata\s*card|lorebook|author'?s?\s*note|control\s*card|system\s*prompt|stage\s*direction)\b/.test(key)) return true;
+    if (/^[\[{(<].*[\]})>]$/.test(raw) && /\b(system|meta|ooc|narrator|tool|gm|omniscient|omniscent)\b/i.test(raw)) return true;
+
+    return false;
+}
+
 function shouldExcludeName(n, { userNames, deletedSet } = {}) {
     const name = String(n || "").trim();
     if (!name) return true;
-    const k = name.toLowerCase();
+    if (name.length > 64) return true;
+    const k = normalizeNameKey(name);
     if (deletedSet && deletedSet.has(k)) return true;
-    const hard = new Set(["you", "user", "narrator", "system", "assistant", "story", "gm", "game master"]);
+    if (isLikelyToolOrMetaCardName(name)) return true;
+    const hard = new Set(["you", "user", "narrator", "system", "assistant", "story", "gm", "game master", "unknown"]);
     if (hard.has(k)) return true;
-    if (Array.isArray(userNames) && userNames.some(u => String(u || "").toLowerCase().trim() === k)) return true;
+    if (Array.isArray(userNames) && userNames.some(u => normalizeNameKey(u) === k)) return true;
     return false;
 }
 
@@ -866,7 +916,7 @@ Rules:
 - Exclude the User name. Include the Main character name if it appears in chat.
 - Do not invent new people. Only output names that appear in the transcript.
 - If uncertain about whether a token is a name, do NOT include it; instead add a short question in questions asking what it refers to.
-- Keep names short (2–40 chars), no emojis, no titles like "Mr.", no roles like "Guard #2" unless that is literally used as the name.`;
+- Keep names short (2â€“40 chars), no emojis, no titles like "Mr.", no roles like "Guard #2" unless that is literally used as the name.`;
 
         const res = await generateContent(prompt, "System Check");
         if (!res) return { names: [], questions: [] };
@@ -880,16 +930,27 @@ Rules:
 }
 
 async function scanChatIntoSocial({ silent } = {}) {
+    if (autoScanInFlight) {
+        if (!silent) notify("info", "Social scan already running.", "Social", "social");
+        return;
+    }
+    autoScanInFlight = true;
+    autoScanLastAt = Date.now();
+    try {
+
     const s = getSettings();
     normalizeSocial(s);
     const ctx = getContext ? getContext() : {};
     const userName = String(ctx?.name1 || "").trim();
+    const mainCharName = String(ctx?.name2 || "").trim();
     const deleted = deletedNameSet(s);
+    const userNames = [userName, mainCharName].filter(Boolean);
 
     // Grab raw text logic
     const transcript = await getChatTranscript(240);
     if (!transcript) {
         if (!silent) notify("info", "No chat transcript found.", "Social", "social");
+        autoScanInFlight = false;
         return;
     }
 
@@ -908,30 +969,44 @@ Rules:
 - "name": Extract the name exactly as it appears (e.g. "The Shopkeeper" -> "Shopkeeper", "John Doe" -> "John Doe").
 - "presence": "present" if they are physically in the scene interacting. "mentioned" if only talked about/remembered.
 - "role": Guess the relationship role based on context.
-- Exclude: The user ("${userName}"), "System", "Narrator", "Game Master".
+- Exclude: The user ("${userName}"), "System", "Narrator", "Game Master", "Omniscient", and any tool/meta/control card names used to run NPCs.
 - Include everyone else found in the text, even if they didn't speak (e.g. "Bob stood silently in the corner").
 `;
 
     try { window.toastr?.info?.("Scanning story for characters..."); } catch (_) {}
 
     let found = [];
+    let res = "";
     try {
-        const res = await generateContent(prompt, "Social Scan");
-        if (!res) {
-            if (!silent) notify("warning", "AI returned no response.", "Social", "api");
-            return;
+        res = await generateContent(prompt, "Social Scan");
+    } catch (_) {
+        res = "";
+    }
+
+    if (res) {
+        const obj = safeJsonParseObject(res) || {};
+        if (Array.isArray(obj?.found)) {
+            found = obj.found;
+        } else if (Array.isArray(obj?.names)) {
+            found = obj.names
+                .map((name) => ({ name: String(name || "").trim(), role: "associate", affinity: 50, presence: "mentioned" }))
+                .filter((x) => x.name);
         }
-        const obj = safeJsonParseObject(res);
-        if (!obj) throw new Error("Invalid JSON");
-        found = Array.isArray(obj?.found) ? obj.found : [];
-    } catch (e) {
-        console.warn("Social Scan Parse Error", e);
-        if (!silent) notify("error", "Failed to parse AI response.", "Social", "api");
-        return;
+    }
+
+    if (!found.length) {
+        try {
+            const alt = await aiExtractNamesFromChat(240);
+            const names = Array.isArray(alt?.names) ? alt.names : [];
+            found = names
+                .map((name) => ({ name: String(name || "").trim(), role: "associate", affinity: 50, presence: "mentioned" }))
+                .filter((x) => x.name);
+        } catch (_) {}
     }
 
     if (!found.length) {
         if (!silent) notify("info", "No new characters found in chat.", "Social", "social");
+        autoScanInFlight = false;
         return;
     }
 
@@ -940,19 +1015,22 @@ Rules:
         if (r.includes("romance") || r.includes("lover") || r.includes("dating")) return "romance";
         if (r.includes("family") || r.includes("sister") || r.includes("brother") || r.includes("mother") || r.includes("father")) return "family";
         if (r.includes("rival") || r.includes("enemy") || r.includes("hostile")) return "rivals";
+        if (r.includes("associate") || r.includes("acquaintance") || r.includes("contact") || r.includes("npc") || r.includes("merchant") || r.includes("stranger")) return "associates";
         return "friends";
     };
 
-    const existingLower = new Set(["friends","associates","romance","family","rivals"].flatMap(k => (s.social[k] || []).map(p => String(p?.name || "").toLowerCase()).filter(Boolean)));
+    const existingLower = new Set(["friends","associates","romance","family","rivals"].flatMap(k => (s.social[k] || []).map(p => normalizeNameKey(p?.name || "")).filter(Boolean)));
     let added = 0;
+    let accepted = 0;
 
-    for (const v of found.slice(0, 30)) {
+    for (const v of found) {
         const nm = String(v?.name || "").trim();
         if (!nm) continue;
-        const key = nm.toLowerCase();
-        if (deleted.has(key)) continue;
+        const key = normalizeNameKey(nm);
+        if (shouldExcludeName(nm, { userNames, deletedSet: deleted })) continue;
         if (existingLower.has(key)) continue;
-        if (key === "you" || key === "user" || key === "me" || key === userName.toLowerCase()) continue;
+        accepted++;
+        if (accepted > 30) break;
 
         const presence = String(v?.presence || "").toLowerCase().trim();
         const met = presence === "present";
@@ -1001,6 +1079,9 @@ Rules:
     } else {
         if (!silent) notify("info", "No new characters added (all exist or ignored).", "Social", "social");
     }
+    } finally {
+        autoScanInFlight = false;
+    }
 }
 
 export async function updateRelationshipScore(name, text, source) {
@@ -1048,7 +1129,7 @@ export async function updateRelationshipScore(name, text, source) {
 
     if (delta !== 0 || (role && role !== prevRole)) {
         commitStateUpdate({ save: true, layout: false, emit: true });
-        try { injectRpEvent(`[Canon Event: Interaction with ${nm}. Affinity: ${Math.round(Number(person.affinity || prevAff))}. Status: ${String(person.relationshipStatus || prevRole || "").trim() || "—"}.]`); } catch (_) {}
+        try { injectRpEvent(`[Canon Event: Interaction with ${nm}. Affinity: ${Math.round(Number(person.affinity || prevAff))}. Status: ${String(person.relationshipStatus || prevRole || "").trim() || "â€”"}.]`); } catch (_) {}
     } else {
         commitStateUpdate({ save: true, layout: false, emit: true });
     }
@@ -1204,17 +1285,18 @@ export function initSocial() {
     });
 
     $win.off("click.uieSocialActions");
-    $win.on("click.uieSocialActions", "#uie-act-add", (e) => { e.preventDefault(); e.stopPropagation(); openAddModal({ mode: "add" }); });
+    $win.on("click.uieSocialActions", "#uie-act-add", (e) => { e.preventDefault(); e.stopPropagation(); $("#uie-social-menu").hide(); openAddModal({ mode: "add" }); });
     $win.on("click.uieSocialActions", "#uie-cancel-add", (e) => { e.preventDefault(); e.stopPropagation(); closeAddModal(); });
     $win.on("click.uieSocialActions", "#uie-submit-add", (e) => { e.preventDefault(); e.stopPropagation(); applyAddOrEdit(); });
 
-    $win.on("click.uieSocialActions", "#uie-act-delete", (e) => { e.preventDefault(); e.stopPropagation(); toggleDeleteMode(); });
+    $win.on("click.uieSocialActions", "#uie-act-delete", (e) => { e.preventDefault(); e.stopPropagation(); $("#uie-social-menu").hide(); toggleDeleteMode(); });
     $win.on("click.uieSocialActions", "#uie-delete-controls .uie-del-confirm", (e) => { e.preventDefault(); e.stopPropagation(); confirmMassDelete(); });
     $win.on("click.uieSocialActions", "#uie-delete-controls .uie-del-cancel", (e) => { e.preventDefault(); e.stopPropagation(); cancelMassDelete(); });
 
     $win.on("click.uieSocialActions", "#uie-act-scan", async (e) => { e.preventDefault(); e.stopPropagation(); $("#uie-social-menu").hide(); await scanChatIntoSocial(); });
     $win.on("click.uieSocialActions", "#uie-act-toggle-auto", (e) => {
         e.preventDefault(); e.stopPropagation();
+        $("#uie-social-menu").hide();
         const s = getSettings();
         if (!s.socialMeta) s.socialMeta = { autoScan: false };
         s.socialMeta.autoScan = !s.socialMeta.autoScan;
@@ -1323,3 +1405,6 @@ export function initSocial() {
         if (typeof mod.initAutoScanning === "function") mod.initAutoScanning();
     });
 }
+
+
+

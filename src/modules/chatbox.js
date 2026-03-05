@@ -1,4 +1,4 @@
-import { getSettings, saveSettings } from "./core.js";
+﻿import { getSettings, saveSettings } from "./core.js";
 import { notify } from "./notifications.js";
 import { getContext } from "../../../../../extensions.js";
 
@@ -176,10 +176,16 @@ function getMsgFromNode(m) {
     }
 }
 
+function normalizeChatboxTextScale(v) {
+    const n = Number(v);
+    if (!Number.isFinite(n)) return 1.0;
+    return Math.max(0.85, Math.min(1.1, n));
+}
+
 function ensureChatboxSettings(s) {
     if (!s.chatbox || typeof s.chatbox !== "object") s.chatbox = {};
     if (typeof s.chatbox.theme !== "string") s.chatbox.theme = "visual_novel";
-    if (!Number.isFinite(Number(s.chatbox.textScale))) s.chatbox.textScale = 1.0;
+    s.chatbox.textScale = normalizeChatboxTextScale(s.chatbox.textScale);
     if (typeof s.chatbox.highContrast !== "boolean") s.chatbox.highContrast = false;
     if (typeof s.chatbox.bgUrl !== "string") s.chatbox.bgUrl = "";
 }
@@ -197,7 +203,8 @@ function applyTheme() {
     w.style.background = `var(--cb-bg, rgba(0,0,0,0.72))`;
     w.style.borderColor = `var(--cb-border, rgba(203,163,92,0.45))`;
     w.style.color = `var(--cb-text, rgba(255,255,255,0.92))`;
-    w.style.fontSize = `${Math.max(0.75, Math.min(1.6, Number(s.chatbox.textScale || 1))) * 100}%`;
+    const textScale = normalizeChatboxTextScale(s.chatbox.textScale || 1);
+    w.style.fontSize = `${Math.round(textScale * 100)}%`;
     w.style.filter = s.chatbox.highContrast ? "contrast(1.12) saturate(1.05)" : "";
     const bg = String(s.chatbox.bgUrl || "").trim();
     if (bg) {
@@ -614,7 +621,7 @@ export function initChatbox() {
         e.stopPropagation();
         const s = getSettings();
         ensureChatboxSettings(s);
-        s.chatbox.textScale = Number($("#uie-chatbox-textscale").val() || 1);
+        s.chatbox.textScale = normalizeChatboxTextScale($("#uie-chatbox-textscale").val() || 1);
         s.chatbox.highContrast = $("#uie-chatbox-contrast").prop("checked") === true;
         s.chatbox.bgUrl = String($("#uie-chatbox-bg").val() || "").trim().slice(0, 600);
         saveSettings();
@@ -706,3 +713,4 @@ export function openChatbox() {
         });
     }
 }
+

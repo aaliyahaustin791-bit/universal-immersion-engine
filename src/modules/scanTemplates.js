@@ -14,18 +14,19 @@ ${transcript}
 Task: Return JSON with NEW Items, Skills, Assets, Life/Status Updates, and Equipment Changes.
 Rules:
 1. **Strictly JSON only**. No commentary, no conversational filler, no markdown blocks if possible (just raw JSON).
-2. **Items**: New loot, currency, or unequipped items found/bought.
-3. **Skills**: New skills learned or revealed (for User or Party).
-4. **Assets**: New abstract resources (deeds, titles, knowledge).
+2. **STRICT EVIDENCE MODE**: Add entries only when ownership/acquisition is explicit in transcript. Never infer.
+3. **Items**: New loot/currency/items explicitly found, bought, received, crafted, or acquired by user/party.
+4. **Skills**: New skills explicitly learned/unlocked/acquired. Include description and type.
+5. **Assets**: New owned assets. Prefer categories: property, vehicle, ship, business, other.
 5. **Life**: Updates to life trackers (HP, MP, Stress, etc.). "delta" for changes.
 6. **Equipment**: Clothes/Gear the user is *currently wearing* or *changed into*.
    - If user changes clothes, the old outfit is unequipped.
 
 Return ONLY JSON:
 {
-  "items": [{"name":"", "type":"item|weapon|currency", "qty":1, "desc":""}],
-  "skills": [{"name":"", "desc":"", "type":"active|passive"}],
-  "assets": [{"name":"", "desc":"", "category":""}],
+  "items": [{"name":"", "type":"item|weapon|currency", "qty":1, "desc":"", "evidence":""}],
+  "skills": [{"name":"", "desc":"", "type":"active|passive", "mods":{}, "active":{}, "passive":{}, "evidence":""}],
+  "assets": [{"name":"", "desc":"", "category":"property|vehicle|ship|business|other", "owned":true, "evidence":""}],
   "life": [{"name":"TrackerName", "delta":0, "set":null, "max":null}],
   "equipped": [{"slotId":"Head|Body|MainHand|OffHand|Accessory", "name":"", "desc":"", "type":"armor|weapon"}]
 }`,
@@ -116,13 +117,13 @@ You are a combat parser.
 Return ONLY JSON (No markdown, no commentary):
 {
   "active": true,
-  "enemies": [{"name":"","hp":0,"maxHp":0,"level":0,"boss":false,"statusEffects":[""]}],
+  "enemies": [{"name":"","hp":null,"maxHp":null,"level":0,"boss":false,"statusEffects":[""],"status":"","threat":""}],
   "turnOrder": [""],
   "log": ["short combat log lines (newest last)"]
 }
 Rules:
 - If no combat is happening, return {"active":false,"enemies":[],"turnOrder":[],"log":[]}
-- Use conservative numbers; if unknown, keep previous values by omitting or setting null.
+- Use conservative numbers; if unknown, keep previous values by omitting or setting null. Prefer null over 0 for unknown hp/maxHp.
 - statusEffects are short labels.
 
 CHAT (last 20 messages):
@@ -143,3 +144,4 @@ CHAT:
 ${chat}`
     }
 };
+

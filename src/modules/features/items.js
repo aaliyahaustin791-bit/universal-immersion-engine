@@ -257,7 +257,12 @@ export function render() {
   const list = s.inventory.items;
   const $grid = $("#uie-items-grid-inner");
   const $empty = $("#uie-items-empty");
+  const $root = $("#uie-items-root");
   if (!$grid.length) return;
+  if ($root.length) {
+    $root.css({ display: "flex", flexDirection: "column", minHeight: "120px", overflow: "auto" });
+  }
+  $grid.css({ display: "flex", flexWrap: "wrap", gap: "10px", alignContent: "flex-start", minWidth: "0" });
 
   const q = String($("#uie-items-search").val() || "").toLowerCase();
   const cat = String($("#uie-items-category").val() || "all");

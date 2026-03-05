@@ -1,15 +1,21 @@
-import { getSettings, saveSettings, isMobileUI } from "./core.js";
+﻿import { getSettings, saveSettings, isMobileUI } from "./core.js";
 import { getContext } from "/scripts/extensions.js";
 import { injectRpEvent } from "./features/rp_log.js";
 import { generateContent } from "./apiClient.js";
 import { notify } from "./notifications.js";
 import { MEDALLIONS } from "./inventory.js";
+import { SCAN_TEMPLATES } from "./scanTemplates.js";
+import { normalizeLifeTracker } from "./features/life.js";
 
 let selectedId = null;
 let tab = "roster";
 let memberModalOpen = false;
 let memberEdit = false;
 let memberModalTab = "sheet";
+let memberModalOpenedAt = 0;
+let ignoreNextBackdropClick = false;
+let partyInit = false;
+let trackerModalEditId = "";
 
 function esc(s) {
     return String(s ?? "")
@@ -18,6 +24,315 @@ function esc(s) {
         .replace(/>/g, "&gt;")
         .replace(/"/g, "&quot;")
         .replace(/'/g, "&#39;");
+}
+
+function clampNum(n, min, max) {
+    const v = Number(n);
+    if (!Number.isFinite(v)) return min;
+    return Math.max(min, Math.min(max, v));
+}
+
+function meterPct(cur, max) {
+    const c = Number(cur || 0);
+    const m = Number(max || 0);
+    if (!Number.isFinite(c) || !Number.isFinite(m) || m <= 0) return 0;
+    return Math.max(0, Math.min(100, (c / m) * 100));
+}
+
+function normalizeHexColor(v) {
+    const raw = String(v || "").trim();
+    return /^#[0-9a-fA-F]{6}$/.test(raw) ? raw : "#89b4fa";
+}
+
+function nextTrackerId() {
+    return `trk_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function normalizeMemberTracker(raw = {}) {
+    const id = String(raw?.id || nextTrackerId()).trim() || nextTrackerId();
+    const base = normalizeLifeTracker(raw);
+    const max = Math.max(1, clampNum(base.max, 1, 999999));
+    const current = clampNum(base.current, -999999, 999999);
+    const color = normalizeHexColor(base.color);
+    return {
+        id,
+        name: String(base.name || "Tracker").trim().slice(0, 60) || "Tracker",
+        current,
+        max,
+        color,
+        notes: String(base.notes || "").slice(0, 800),
+    };
+}
+
+function getSheetTrackerRows(m) {
+    const rows = [];
+
+    const custom = Array.isArray(m?.trackers) ? m.trackers : [];
+    for (let i = 0; i < custom.length; i++) {
+        const t = normalizeMemberTracker(custom[i]);
+        custom[i] = t;
+        rows.push({
+            kind: "custom",
+            key: t.id,
+            id: t.id,
+            name: t.name,
+            current: Number(t.current || 0),
+            max: Math.max(1, Number(t.max || 1)),
+            color: t.color,
+            notes: t.notes,
+        });
+    }
+
+    return rows;
+}
+
+function renderSheetTrackers(container, m) {
+    const host = container.find(".party-member-trackers");
+    if (!host.length) return;
+    host.empty();
+
+    const tmpl = document.getElementById("uie-party-tracker-row");
+    if (!tmpl || !tmpl.content) return;
+
+    const rows = getSheetTrackerRows(m);
+    if (!rows.length) {
+        host.html(`<div style="opacity:0.65; font-weight:800; padding:8px; border:1px dashed rgba(255,255,255,0.16); border-radius:10px;">No life trackers yet.</div>`);
+        return;
+    }
+
+    rows.forEach((row) => {
+        const el = $(tmpl.content.cloneNode(true));
+        const card = el.find(".party-tracker-card");
+        card.attr("data-track-kind", row.kind);
+        card.attr("data-track-key", row.key);
+        card.attr("data-track-id", row.id || "");
+
+        el.find(".party-tracker-dot").css("background", row.color || "#89b4fa");
+        el.find(".party-tracker-name").text(row.name || "Tracker");
+        el.find(".party-tracker-meta").text(`${Math.round(Number(row.current || 0))}/${Math.round(Math.max(1, Number(row.max || 0)))}`);
+        el.find(".party-tracker-fill").css({ width: `${meterPct(row.current, row.max)}%`, background: row.color || "#89b4fa" });
+
+        const notes = String(row.notes || "").trim();
+        if (notes) el.find(".party-tracker-notes").text(notes).show();
+
+        if (row.kind === "custom") {
+            el.find(".party-track-edit, .party-track-del").show();
+        }
+
+        host.append(el);
+    });
+}
+
+function applyTrackerDelta(m, rowMeta, delta) {
+    if (!m || !rowMeta) return false;
+    const kind = String(rowMeta.kind || "");
+    const key = String(rowMeta.key || "");
+    const amt = Number(delta || 0);
+    if (!Number.isFinite(amt) || amt === 0) return false;
+
+    if (kind === "base") {
+        if (!m.vitals) m.vitals = {};
+        if (!m.progression) m.progression = { level: 1, xp: 0, skillPoints: 0, perkPoints: 0 };
+
+        if (key === "hp" || key === "mp" || key === "ap") {
+            const map = {
+                hp: ["hp", "maxHp"],
+                mp: ["mp", "maxMp"],
+                ap: ["ap", "maxAp"],
+            };
+            const pair = map[key];
+            if (!pair) return false;
+            const curKey = pair[0];
+            const maxKey = pair[1];
+            const cur = Number(m.vitals?.[curKey] || 0);
+            const max = Math.max(1, Number(m.vitals?.[maxKey] || 1));
+            const next = clampNum(cur + amt, 0, max);
+            if (next === cur) return false;
+            m.vitals[curKey] = next;
+            return true;
+        }
+
+        if (key === "xp") {
+            let level = Math.max(1, Math.round(Number(m.progression?.level || 1)));
+            let xp = Number(m.progression?.xp || 0);
+            if (!Number.isFinite(xp)) xp = 0;
+            xp += amt;
+
+            const xpGoal = (lv) => Math.max(100, lv * 1000);
+            while (xp >= xpGoal(level) && level < 999) {
+                xp -= xpGoal(level);
+                level += 1;
+            }
+            while (xp < 0 && level > 1) {
+                level -= 1;
+                xp += xpGoal(level);
+            }
+            if (level <= 1 && xp < 0) xp = 0;
+
+            const nextXp = Math.max(0, Math.round(xp));
+            const prevXp = Math.max(0, Math.round(Number(m.progression?.xp || 0)));
+            const prevLevel = Math.max(1, Math.round(Number(m.progression?.level || 1)));
+            if (nextXp === prevXp && level === prevLevel) return false;
+
+            m.progression.level = level;
+            m.progression.xp = nextXp;
+            return true;
+        }
+
+        return false;
+    }
+
+    if (!Array.isArray(m.trackers)) m.trackers = [];
+    const id = String(rowMeta.id || rowMeta.key || "").trim();
+    if (!id) return false;
+    const t = m.trackers.find((x) => String(x?.id || "").trim() === id);
+    if (!t) return false;
+
+    const cur = Number(t.current || 0);
+    const next = clampNum(cur + amt, -999999, 999999);
+    if (next === cur) return false;
+    t.current = next;
+    t.max = clampNum(t.max, 0, 999999);
+    return true;
+}
+
+function getSelectedTrackerMember(s) {
+    ensureParty(s);
+    const m = selectedId ? getMember(s, selectedId) : (Array.isArray(s.party?.members) ? s.party.members[0] : null);
+    if (!m) return null;
+    ensureMember(m);
+    if (!selectedId && m.id) selectedId = String(m.id);
+    return m;
+}
+
+function openMemberTrackerModal(m, trackerId = "") {
+    if (!m) return;
+    ensureMember(m);
+    if (!Array.isArray(m.trackers)) m.trackers = [];
+
+    const id = String(trackerId || "").trim();
+    const existing = id ? m.trackers.find((x) => String(x?.id || "").trim() === id) : null;
+    trackerModalEditId = existing ? String(existing.id || "") : "";
+
+    const normalized = normalizeMemberTracker(existing || {
+        id: nextTrackerId(),
+        name: "",
+        current: 0,
+        max: 100,
+        color: "#89b4fa",
+        notes: "",
+    });
+
+    $("#party-track-modal-title").text(existing ? `Edit Tracker: ${normalized.name}` : "New Tracker");
+    $("#party-track-modal-name").val(existing ? normalized.name : "");
+    $("#party-track-modal-color").val(normalized.color || "#89b4fa");
+    $("#party-track-modal-current").val(Number(normalized.current || 0));
+    $("#party-track-modal-max").val(Math.max(1, Number(normalized.max || 100)));
+    $("#party-track-modal-notes").val(normalized.notes || "");
+    $("#party-track-modal-delete").toggle(!!existing);
+    $("#uie-party-tracker-modal").css({ display: "flex", zIndex: String(getMemberModalZIndex() + 2) });
+}
+
+function closeMemberTrackerModal() {
+    trackerModalEditId = "";
+    $("#uie-party-tracker-modal").hide();
+}
+
+function saveMemberTrackerModal() {
+    const s = getSettings();
+    const m = getSelectedTrackerMember(s);
+    if (!m) return;
+    if (!Array.isArray(m.trackers)) m.trackers = [];
+
+    const normalized = normalizeMemberTracker({
+        id: trackerModalEditId || nextTrackerId(),
+        name: $("#party-track-modal-name").val(),
+        color: $("#party-track-modal-color").val(),
+        current: $("#party-track-modal-current").val(),
+        max: $("#party-track-modal-max").val(),
+        notes: $("#party-track-modal-notes").val(),
+    });
+
+    const idx = trackerModalEditId
+        ? m.trackers.findIndex((x) => String(x?.id || "").trim() === String(trackerModalEditId))
+        : -1;
+    if (idx >= 0) m.trackers[idx] = normalized;
+    else m.trackers.push(normalized);
+
+    saveSettings();
+    closeMemberTrackerModal();
+    render();
+    if (memberModalOpen) {
+        try { renderMemberModal(s, m); } catch (_) {}
+    }
+}
+
+function deleteMemberTrackerFromModal() {
+    if (!trackerModalEditId) return;
+    const s = getSettings();
+    const m = getSelectedTrackerMember(s);
+    if (!m || !Array.isArray(m.trackers)) return;
+
+    const idx = m.trackers.findIndex((x) => String(x?.id || "").trim() === String(trackerModalEditId));
+    if (idx < 0) return;
+    if (!window.confirm("Delete this tracker?")) return;
+
+    m.trackers.splice(idx, 1);
+    saveSettings();
+    closeMemberTrackerModal();
+    render();
+    if (memberModalOpen) {
+        try { renderMemberModal(s, m); } catch (_) {}
+    }
+}
+
+function downloadJsonFile(filename, data) {
+    try {
+        const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = String(filename || "party_export.json");
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+    } catch (_) {}
+}
+
+function pickJsonFile() {
+    return new Promise((resolve) => {
+        try {
+            const input = document.createElement("input");
+            input.type = "file";
+            input.accept = "application/json,.json";
+            input.style.display = "none";
+            document.body.appendChild(input);
+            input.onchange = async () => {
+                try {
+                    const f = input.files && input.files[0] ? input.files[0] : null;
+                    if (!f) { input.remove(); return resolve(null); }
+                    const r = new FileReader();
+                    r.onload = () => {
+                        const txt = String(r.result || "");
+                        try { input.remove(); } catch (_) {}
+                        resolve(txt || null);
+                    };
+                    r.onerror = () => {
+                        try { input.remove(); } catch (_) {}
+                        resolve(null);
+                    };
+                    r.readAsText(f);
+                } catch (_) {
+                    try { input.remove(); } catch (_) {}
+                    resolve(null);
+                }
+            };
+            input.click();
+        } catch (_) {
+            resolve(null);
+        }
+    });
 }
 
 function skillKey(name) {
@@ -67,11 +382,15 @@ function ensureParty(s) {
     if (!s.party.partyTactics) s.party.partyTactics = { preset: "Balanced" };
 }
 
+function isUserMember(s, m) {
+    const memberName = String(m?.identity?.name || "").trim().toLowerCase();
+    const coreName = String(s?.character?.name || "").trim().toLowerCase();
+    return (Array.isArray(m?.roles) && m.roles.includes("User")) || (!!memberName && !!coreName && memberName === coreName);
+}
+
 function findUserMember(s) {
-    const name = String(s?.character?.name || "").trim().toLowerCase();
     const members = Array.isArray(s?.party?.members) ? s.party.members : [];
-    let m = members.find(x => Array.isArray(x?.roles) && x.roles.includes("User"));
-    if (!m && name) m = members.find(x => String(x?.identity?.name || "").trim().toLowerCase() === name);
+    const m = members.find((x) => isUserMember(s, x));
     return m || null;
 }
 
@@ -157,6 +476,7 @@ function defaultMember(name) {
         vitals: { hp: 100, maxHp: 100, mp: 50, maxMp: 50, ap: 10, maxAp: 10, stamina: 100, maxStamina: 100 },
         progression: { level: 1, xp: 0, skillPoints: 0, perkPoints: 0, reborn: false, activeMedallion: null },
         equipment: {},
+        trackers: [],
         partyRole: "DPS",
         roles: [],
         statusEffects: [],
@@ -205,6 +525,8 @@ function ensureMember(m) {
     }
 
     if (!m.equipment) m.equipment = {};
+    if (!Array.isArray(m.trackers)) m.trackers = [];
+    m.trackers = m.trackers.map((t) => normalizeMemberTracker(t)).filter(Boolean).slice(0, 24);
     if (!m.tactics) m.tactics = { preset: "Balanced" };
     if (!Array.isArray(m.statusEffects)) m.statusEffects = [];
     if (!m.partyRole) m.partyRole = "DPS";
@@ -234,7 +556,7 @@ function resolvePortraitUrl(s, m) {
         const av = String(f?.avatar || f?.img || "").trim();
         if (av) return av;
     }
-    const isUser = (Array.isArray(m?.roles) && m.roles.includes("User"));
+    const isUser = isUserMember(s, m);
     if (isUser) {
         const ua = String(s?.character?.avatar || "").trim();
         if (ua) return ua;
@@ -306,6 +628,7 @@ function renderRoster(s) {
             const el = $(tmpl.cloneNode(true));
             const row = el.find(".party-row");
             row.attr("data-id", m.id);
+            row.css({ cursor: "pointer", pointerEvents: "auto" });
             if (selectedId === String(m.id)) row.addClass("active");
 
             const portraitUrl = resolvePortraitUrl(s, m);
@@ -319,7 +642,7 @@ function renderRoster(s) {
             el.find(".party-row-name").text(m.identity.name);
             el.find(".party-row-name").css("color", m.active ? "#fff" : "#888");
 
-            el.find(".party-row-desc").text(`Lv.${m.progression?.level || 1} • ${m.partyRole || "DPS"} • ${m.identity.class || "Adventurer"}`);
+            el.find(".party-row-desc").text(`Lv.${m.progression?.level || 1} â€¢ ${m.partyRole || "DPS"} â€¢ ${m.identity.class || "Adventurer"}`);
 
             el.find("[data-act='toggleActive']").css("color", m.active ? "#2ecc71" : "#444");
             el.find("[data-act='leader']").css("color", s.party.leaderId === String(m.id) ? "#f1c40f" : "#444");
@@ -356,7 +679,7 @@ function renderSheet(s) {
 
     // Header info
     container.find(".sheet-name").text(m.identity.name);
-    container.find(".sheet-details").text(`${m.identity.class || "Adventurer"} • Lv.${Number(m.progression?.level || 1)} • ${m.partyRole || "DPS"}`);
+    container.find(".sheet-details").text(`${m.identity.class || "Adventurer"} â€¢ Lv.${Number(m.progression?.level || 1)} â€¢ ${m.partyRole || "DPS"}`);
 
     // Member select
     const select = container.find(".party-sheet-member-select");
@@ -384,10 +707,13 @@ function renderSheet(s) {
     // Vitals
     container.find(".val-hp").text(`${Number(m.vitals?.hp||0)} / ${Number(m.vitals?.maxHp||0)}`);
     container.find(".val-mp").text(`${Number(m.vitals?.mp||0)} / ${Number(m.vitals?.maxMp||0)}`);
+    container.find(".val-ap").text(`${Number(m.vitals?.ap||0)} / ${Number(m.vitals?.maxAp||0)}`);
+    container.find(".val-xp").text(`${Number(m.progression?.xp||0)} / ${Math.max(1, Number(m.progression?.level||1)) * 1000}`);
+    renderSheetTrackers(container, m);
 
     // Bio & CSS
-    container.find(".bio-text").text(m.bio || "—");
-    container.find(".css-text").text(m.customCSS || "—");
+    container.find(".bio-text").text(m.bio || "â€”");
+    container.find(".css-text").text(m.customCSS || "â€”");
 
     // Events
     container.find(".uie-party-subtab").on("click", function() {
@@ -520,7 +846,7 @@ function renderTactics(s) {
             ensureMember(m);
             const el = $(rowTmpl.cloneNode(true));
             el.find(".tac-name").text(m.identity?.name || "Member");
-            el.find(".tac-details").text(`Lv ${Number(m.progression?.level||1)} • ${m.partyRole||"DPS"}`);
+            el.find(".tac-details").text(`Lv ${Number(m.progression?.level||1)} â€¢ ${m.partyRole||"DPS"}`);
 
             // Preset
             const mPreset = el.find(".member-tac-preset");
@@ -549,7 +875,7 @@ function renderTactics(s) {
             // Protect
             const mProtect = el.find(".member-tac-protect");
             mProtect.attr("data-id", m.id);
-            mProtect.append(`<option value="">—</option>`);
+            mProtect.append(`<option value="">â€”</option>`);
             // Add member options, disable self
             activeMembers.forEach(am => {
                 const opt = $("<option>").val(am.id).text(am.identity?.name || "Member");
@@ -602,7 +928,7 @@ function renderFormation(s) {
         // Add Select
         const addSel = laneEl.find(".form-add-select");
         addSel.attr("id", `form-add-${cfg.key}`);
-        addSel.append(`<option value="">Select member…</option>`);
+        addSel.append(`<option value="">Select memberâ€¦</option>`);
         available.forEach(m => {
             addSel.append($("<option>").val(m.id).text(m.identity?.name || "Member"));
         });
@@ -626,7 +952,7 @@ function renderFormation(s) {
                 memDiv.attr("data-id", m.id);
 
                 memEl.find(".form-mem-name").text(m.identity?.name || "Member");
-                memEl.find(".form-mem-details").text(`Lv ${Number(m.progression?.level||1)} • ${m.identity?.class||"Adventurer"}`);
+                memEl.find(".form-mem-details").text(`Lv ${Number(m.progression?.level||1)} â€¢ ${m.identity?.class||"Adventurer"}`);
 
                 const roleSel = memEl.find(".form-role");
                 roleSel.attr("data-id", m.id);
@@ -648,21 +974,99 @@ function renderFormation(s) {
     });
 }
 
+function ensurePartyWindowClickable() {
+    try {
+        const win = document.getElementById("uie-party-window");
+        if (!win) return;
+        win.style.pointerEvents = "auto";
+        win.style.position = "fixed";
+        win.style.left = "0px";
+        win.style.top = "0px";
+        win.style.right = "auto";
+        win.style.bottom = "auto";
+        win.style.width = "100vw";
+        win.style.height = "100vh";
+        win.style.maxWidth = "none";
+        win.style.maxHeight = "none";
+        win.style.borderRadius = "0";
+        win.style.transform = "none";
+    } catch (_) {}
+}
+
+function getMemberModalZIndex() {
+    let z = 2147483656;
+    try {
+        const party = document.getElementById("uie-party-window");
+        if (!party) return z;
+        const partyZ = Number(window.getComputedStyle(party).zIndex || 0);
+        if (Number.isFinite(partyZ) && partyZ > 0) z = Math.max(z, partyZ + 2);
+    } catch (_) {}
+    return z;
+}
+
+function applyMemberModalFullscreenStyles(show = memberModalOpen) {
+    try {
+        const z = String(getMemberModalZIndex());
+        const mm = $("[id='uie-party-member-modal']");
+        mm.css({
+            display: show ? "block" : "none",
+            pointerEvents: show ? "auto" : "none",
+            background: "rgba(0,0,0,0.65)",
+            position: "fixed",
+            left: 0,
+            top: 0,
+            right: 0,
+            bottom: 0,
+            width: "100vw",
+            height: "100vh",
+            zIndex: z
+        });
+
+        const card = $("[id='uie-party-member-card']");
+        if (card && card.length) {
+            card.css({
+                position: "fixed",
+                left: 0,
+                top: 0,
+                right: 0,
+                bottom: 0,
+                width: "100vw",
+                height: "100vh",
+                maxWidth: "none",
+                maxHeight: "none",
+                borderRadius: 0,
+                margin: 0,
+                transform: "none"
+            });
+        }
+    } catch (_) {}
+}
+
 function render() {
     const s = getSettings();
     ensureParty(s);
-    try {
-        const mm = $("#uie-party-member-modal");
-        if (memberModalOpen) mm.css({ display: "block", pointerEvents: "auto" });
-        else mm.css({ display: "none", pointerEvents: "none" });
-    } catch (_) {}
+    applyMemberModalFullscreenStyles(memberModalOpen);
+    ensurePartyWindowClickable();
     if (!s.ui) s.ui = {};
     if (!s.ui.backgrounds) s.ui.backgrounds = {};
     const partyBg = String(s.ui.backgrounds.party || "");
     if (partyBg) {
-        $("#uie-party-window").css({ backgroundImage: `url("${partyBg}")`, backgroundSize: "cover", backgroundPosition: "center" });
+        $("#uie-party-window").css({
+            backgroundImage: `linear-gradient(180deg, rgba(0,0,0,0.92), rgba(0,0,0,0.75)), url("${partyBg}")`,
+            backgroundSize: "cover",
+            backgroundPosition: "center",
+            pointerEvents: "auto",
+            position: "fixed"
+        });
     } else {
-        $("#uie-party-window").css({ background: "#050505", backgroundImage: "", backgroundSize: "", backgroundPosition: "" });
+        $("#uie-party-window").css({
+            background: "rgba(5,5,8,0.98)",
+            backgroundImage: "",
+            backgroundSize: "",
+            backgroundPosition: "",
+            pointerEvents: "auto",
+            position: "fixed"
+        });
     }
 
     try { syncPartyUserFromCore(); } catch (_) {}
@@ -674,12 +1078,13 @@ function render() {
     $("#uie-party-name-input").val(s.party.name || "");
 
     // Tabs
-    $(".uie-party-tab").css({background:"rgba(0,0,0,0.95)", color:"#fff", borderColor:"rgba(255,255,255,0.1)"});
+    if (tab === "gear") tab = "sheet";
+    $(".uie-party-tab").css({background:"rgba(0,0,0,0.95)", color:"#fff", borderColor:"rgba(255,255,255,0.1)", cursor:"pointer", pointerEvents:"auto", touchAction:"manipulation"});
     $(`.uie-party-tab[data-tab="${tab}"]`).css({background:"rgba(241,196,15,0.15)", color:"#f1c40f", borderColor:"rgba(241,196,15,0.3)"});
+    $("#uie-party-body").css({ pointerEvents: "auto" });
 
     if (tab === "roster") renderRoster(s);
     else if (tab === "sheet") renderSheet(s);
-    else if (tab === "gear") renderGear(s);
     else if (tab === "inventory") renderInventory(s);
     else if (tab === "tactics") renderTactics(s);
     else if (tab === "formation") renderFormation(s);
@@ -799,6 +1204,17 @@ async function scanPartyFromChat() {
     }
 }
 
+function resolveMemberModalLayoutTemplate() {
+    const ids = isMobileUI()
+        ? ["uie-party-modal-layout-mobile", "uie-party-modal-layout-desktop", "uie-party-modal-layout"]
+        : ["uie-party-modal-layout-desktop", "uie-party-modal-layout-mobile", "uie-party-modal-layout"];
+    for (const id of ids) {
+        const el = document.getElementById(id);
+        if (el && el.content) return el;
+    }
+    return null;
+}
+
 function renderMemberModal(s, m) {
     ensureMember(m);
     $("#uie-party-member-title").text(`${m.identity?.name || "Member"}`);
@@ -818,11 +1234,17 @@ function renderMemberModal(s, m) {
         }
     } catch (_) {}
 
-    const container = $("#uie-party-member-content").empty();
-    const layout = $(document.getElementById("uie-party-modal-layout").content.cloneNode(true));
+    const container = $("#uie-party-member-content").empty().css({ minHeight: "200px", overflow: "auto" });
+    const layoutTmpl = resolveMemberModalLayoutTemplate();
+    if (!layoutTmpl || !layoutTmpl.content) {
+        container.html(`<div style="padding:20px;color:#fff;">Member: ${esc(m.identity?.name || "Unknown")}</div>`);
+        return;
+    }
+    const layout = $(layoutTmpl.content.cloneNode(true));
     container.append(layout);
 
     // Active Tab
+    container.find(".party-mm-tab").css({ pointerEvents: "auto", touchAction: "manipulation" });
     container.find(`.party-mm-tab[data-tab="${memberModalTab}"]`)
         .css({background: "rgba(241,196,15,0.18)", color: "#f1c40f"});
 
@@ -830,8 +1252,10 @@ function renderMemberModal(s, m) {
 
     // --- SHEET PANE ---
     const sheetPane = container.find("#party-mm-pane-sheet");
-    const sheetTmpl = document.getElementById("uie-party-modal-sheet-pane").content.cloneNode(true);
-    sheetPane.append(sheetTmpl);
+    const sheetTmplEl = document.getElementById("uie-party-modal-sheet-pane");
+    if (sheetTmplEl && sheetTmplEl.content) {
+        sheetPane.append(sheetTmplEl.content.cloneNode(true));
+    }
 
     // Portrait
     const portrait = resolvePortraitUrl(s, m);
@@ -859,7 +1283,8 @@ function renderMemberModal(s, m) {
     roleSel.prop("disabled", dis).css(pe);
 
     // Bars
-    const barTmpl = document.getElementById("uie-party-modal-bar").content;
+    const barTmplEl = document.getElementById("uie-party-modal-bar");
+    const barTmpl = barTmplEl && barTmplEl.content ? barTmplEl.content : null;
     const vitalsSection = sheetPane.find(".vitals-section");
     const bars = [
         { l: "HP", c: m.vitals?.hp, m: m.vitals?.maxHp, col: "#e74c3c", k: "hp" },
@@ -868,6 +1293,7 @@ function renderMemberModal(s, m) {
         { l: "XP", c: m.progression?.xp, m: (m.progression?.level||1)*1000, col: "#2ecc71", k: "xp" }
     ];
     bars.forEach(b => {
+        if (!barTmpl) return;
         const el = $(barTmpl.cloneNode(true));
         el.find(".bar-lbl").text(b.l);
         const cur = Number(b.c||0);
@@ -878,6 +1304,9 @@ function renderMemberModal(s, m) {
 
         vitalsSection.append(el);
     });
+
+    renderSheetTrackers(sheetPane, m);
+    sheetPane.find("#party-mm-track-add").show();
 
     // Status FX
     const fxList = sheetPane.find(".status-fx-list");
@@ -919,9 +1348,11 @@ function renderMemberModal(s, m) {
     const pdPick = equipPane.find("#party-paperdoll-pick");
     pdPick.css("cursor", memberEdit ? "pointer" : "default");
     if (m.images.paperDoll) {
-        pdPick.html(`<img src="${esc(m.images.paperDoll)}" style="width:100%;height:100%;object-fit:contain; background:rgba(0,0,0,0.10);">`);
+        pdPick.addClass("has-image");
+        pdPick.html(`<img class="party-paperdoll-img" src="${esc(m.images.paperDoll)}" alt="Paper Doll">`);
     } else {
-        pdPick.html(`<div style="opacity:0.7; font-weight:900;">Paper Doll</div>`);
+        pdPick.removeClass("has-image");
+        pdPick.html(`<div class="party-paperdoll-empty">Paper Doll</div>`);
     }
 
     const equipRows = equipPane.find(".equip-rows");
@@ -1013,32 +1444,38 @@ function openMemberModal(s, id, edit = false) {
     ensureMember(m);
     selectedId = String(m.id);
     memberModalOpen = true;
+    memberModalOpenedAt = Date.now();
+    ignoreNextBackdropClick = true;
     memberEdit = edit === true;
-    // Ensure display block AND pointer-events auto
-    $("#uie-party-member-modal").css({ display: "block", pointerEvents: "auto" });
-    const card = $("#uie-party-member-card");
-    if (card && card.length) {
-        try {
-            if (isMobileUI()) {
-                card.css({ left: 0, top: 0, right: 0, bottom: 0, width: "100%", height: "100%", borderRadius: 0, margin: 0 });
-            } else {
-                const vw = window.innerWidth || document.documentElement.clientWidth || 0;
-                const vh = window.innerHeight || document.documentElement.clientHeight || 0;
-                const w = Math.min(680, Math.floor(vw * 0.96));
-                const h = Math.min(740, Math.floor(vh * 0.92));
-                const x = Math.max(10, Math.floor((vw - w) / 2));
-                const y = Math.max(10, Math.floor((vh - h) / 2));
-                card.css({ left: x, top: y, right: "", bottom: "", width: w, height: h, borderRadius: "16px" });
-            }
-        } catch (_) {}
+    const modalEls = Array.from(document.querySelectorAll("[id='uie-party-member-modal']"));
+    if (!modalEls.length) return;
+    const modal = modalEls[0];
+    if (modalEls.length > 1) {
+        for (let i = 1; i < modalEls.length; i++) {
+            try { modalEls[i].remove(); } catch (_) {}
+        }
     }
+    if (modal.parentElement !== document.body) {
+        document.body.appendChild(modal);
+    }
+    applyMemberModalFullscreenStyles(true);
     renderMemberModal(s, m);
 }
 
 function closeMemberModal() {
     memberModalOpen = false;
+    ignoreNextBackdropClick = false;
     memberEdit = false;
-    $("#uie-party-member-modal").hide();
+    closeMemberTrackerModal();
+    applyMemberModalFullscreenStyles(false);
+}
+
+export function refreshParty() {
+    if (!partyInit) {
+        initParty();
+        return;
+    }
+    render();
 }
 
 async function pickPortraitForMember(s, m, kind) {
@@ -1051,49 +1488,234 @@ async function pickPortraitForMember(s, m, kind) {
 }
 
 export function initParty() {
+    if (partyInit) {
+        render();
+        return;
+    }
+    partyInit = true;
     const s = getSettings();
     ensureParty(s);
 
+    ensurePartyWindowClickable();
+
     const $win = $("#uie-party-window");
     const $modal = $("#uie-party-member-modal");
-    
-    // Clear previous namespaces
+    const $body = $("body");
+
     $(document).off("click.party change.party pointerup.party");
     $win.off("click.party change.party pointerup.party");
     $modal.off("click.party change.party pointerup.party");
+    $body.off("click.party pointerup.party", "[id='uie-party-member-modal'] [id='uie-party-member-close']");
+    $body.off("click.party pointerup.party", "[id='uie-party-member-modal']");
 
     let lastTouchOpenAt = 0;
+    let lastTouchTabAt = 0;
 
-    $win.on("click.party", ".uie-party-tab", function() {
+    const shouldHandleTouchPointer = (e) => {
+        if (e?.type !== "pointerup") return true;
+        const pt = String(e.pointerType || "").toLowerCase();
+        return !pt || pt === "touch" || pt === "pen";
+    };
+
+    $(document).on("click.party pointerup.party", "#uie-party-window .uie-party-tab", function(e) {
+        if (!shouldHandleTouchPointer(e)) return;
+        if (e.type === "pointerup") {
+            lastTouchTabAt = Date.now();
+            e.preventDefault();
+            e.stopPropagation();
+        } else {
+            const t = Number(lastTouchTabAt || 0);
+            if (t && Date.now() - t < 650) return;
+        }
         tab = $(this).data("tab");
         render();
     });
 
-    $modal.on("click.party", ".party-mm-tab", function (e) {
-        e.preventDefault();
-        e.stopPropagation();
+    $(document).on("click.party pointerup.party", "#uie-party-member-modal .party-mm-tab", function (e) {
+        if (!shouldHandleTouchPointer(e)) return;
+        if (e.type === "pointerup") {
+            lastTouchTabAt = Date.now();
+            e.preventDefault();
+            e.stopPropagation();
+        } else {
+            const t = Number(lastTouchTabAt || 0);
+            if (t && Date.now() - t < 650) return;
+            e.preventDefault();
+            e.stopPropagation();
+        }
         memberModalTab = String($(this).data("tab") || "sheet");
         const s2 = getSettings();
         const m = selectedId ? getMember(s2, selectedId) : null;
         if (m) renderMemberModal(s2, m);
     });
 
-    $win.on("click.party", "#party-add", function() {
+    $(document).on("click.party", "#uie-party-window #party-add", function() {
         const s = getSettings();
         s.party.members.push(defaultMember("New Member"));
         saveSettings();
         render();
     });
 
-    $win.on("click.party", "#party-import-user", function() {
+    $(document).on("click.party", "#uie-party-window #party-track-add, #uie-party-member-modal #party-mm-track-add", function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        const s2 = getSettings();
+        const m = getSelectedTrackerMember(s2);
+        if (!m) return;
+        openMemberTrackerModal(m);
+    });
+
+    $(document).on("click.party", "#uie-party-window .party-track-btn, #uie-party-member-modal .party-track-btn", function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        const card = $(this).closest(".party-tracker-card");
+        if (!card.length) return;
+        const act = String($(this).attr("data-act") || "").trim();
+        const delta = act === "minus" ? -1 : act === "plus" ? 1 : 0;
+        if (!delta) return;
+
+        const s2 = getSettings();
+        ensureParty(s2);
+        const m = selectedId ? getMember(s2, selectedId) : null;
+        if (!m) return;
+        ensureMember(m);
+
+        const rowMeta = {
+            kind: String(card.attr("data-track-kind") || ""),
+            key: String(card.attr("data-track-key") || ""),
+            id: String(card.attr("data-track-id") || ""),
+        };
+        const changed = applyTrackerDelta(m, rowMeta, delta);
+        if (!changed) return;
+
+        const isUser = isUserMember(s2, m);
+        if (isUser) {
+            applyMemberToCore(s2, m);
+            try { $(document).trigger("uie:updateVitals"); } catch (_) {}
+        }
+
+        saveSettings();
+        render();
+        if (memberModalOpen) {
+            try { renderMemberModal(s2, m); } catch (_) {}
+        }
+    });
+
+    $(document).on("click.party", "#uie-party-window .party-track-edit, #uie-party-member-modal .party-track-edit", function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        const card = $(this).closest(".party-tracker-card");
+        if (!card.length) return;
+
+        const id = String(card.attr("data-track-id") || "").trim();
+        if (!id) return;
+
+        const s2 = getSettings();
+        const m = getSelectedTrackerMember(s2);
+        if (!m) return;
+        openMemberTrackerModal(m, id);
+    });
+
+    $(document).on("click.party", "#party-track-modal-close, #party-track-modal-cancel", function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        closeMemberTrackerModal();
+    });
+
+    $(document).on("click.party", "#party-track-modal-save", function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        saveMemberTrackerModal();
+    });
+
+    $(document).on("click.party", "#party-track-modal-delete", function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        deleteMemberTrackerFromModal();
+    });
+
+    $(document).on("click.party", "#uie-party-tracker-modal", function(e) {
+        e.stopPropagation();
+        if ($(e.target).closest("#party-track-modal-box").length) return;
+        closeMemberTrackerModal();
+    });
+
+    $(document).on("click.party", "#uie-party-window .party-track-del, #uie-party-member-modal .party-track-del", function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        const card = $(this).closest(".party-tracker-card");
+        if (!card.length) return;
+        const id = String(card.attr("data-track-id") || "").trim();
+        if (!id) return;
+
+        const s2 = getSettings();
+        ensureParty(s2);
+        const m = selectedId ? getMember(s2, selectedId) : null;
+        if (!m) return;
+        ensureMember(m);
+
+        const idx = m.trackers.findIndex((x) => String(x?.id || "").trim() === id);
+        if (idx < 0) return;
+        if (!window.confirm("Delete this tracker?")) return;
+        m.trackers.splice(idx, 1);
+        saveSettings();
+        render();
+        if (memberModalOpen) {
+            try { renderMemberModal(s2, m); } catch (_) {}
+        }
+    });
+
+    $(document).on("click.party", "#uie-party-window #party-import-user", function() {
         importUser(getSettings());
     });
 
-    $win.on("click.party", "#party-import-char", function() {
+    $(document).on("click.party", "#uie-party-window #party-import-char", function() {
         importChatChar(getSettings());
     });
 
-    $win.on("click.party", "#uie-party-save-meta", function() {
+    $(document).on("click.party", "#uie-party-window #party-scan-chat", async function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        await scanPartyFromChat();
+    });
+
+    $(document).on("click.party", "#uie-party-window #uie-party-export", function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        const s2 = getSettings();
+        ensureParty(s2);
+        downloadJsonFile(`uie_party_${new Date().toISOString().slice(0, 10)}.json`, s2.party);
+        try { window.toastr?.success?.("Party exported."); } catch (_) {}
+    });
+
+    $(document).on("click.party", "#uie-party-window #uie-party-import", async function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        const txt = await pickJsonFile();
+        if (!txt) return;
+        let obj = null;
+        try {
+            const cleaned = String(txt || "").replace(/^\uFEFF/, "").trim();
+            obj = JSON.parse(cleaned);
+        } catch (_) {
+            obj = null;
+        }
+        const incoming = obj && typeof obj === "object" ? (obj.party && typeof obj.party === "object" ? obj.party : obj) : null;
+        if (!incoming || typeof incoming !== "object") {
+            try { window.toastr?.error?.("Invalid party file."); } catch (_) {}
+            return;
+        }
+        const s2 = getSettings();
+        s2.party = { ...incoming };
+        ensureParty(s2);
+        if (!Array.isArray(s2.party.members)) s2.party.members = [];
+        for (const m of s2.party.members) ensureMember(m);
+        saveSettings();
+        render();
+        try { window.toastr?.success?.("Party imported."); } catch (_) {}
+    });
+
+    $(document).on("click.party", "#uie-party-window #uie-party-save-meta", function() {
         const s = getSettings();
         s.party.name = $("#uie-party-name-input").val();
         saveSettings();
@@ -1101,7 +1723,69 @@ export function initParty() {
         if(window.toastr) toastr.success("Party info saved.");
     });
 
-    $win.on("click.party", "#uie-party-bg-edit", async function (e) {
+    $(document).on("click.party", "#uie-party-window #party-inv-add", function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        const s2 = getSettings();
+        ensureParty(s2);
+        const name = String(window.prompt("Item name:", "") || "").trim();
+        if (!name) return;
+        const type = String(window.prompt("Item type:", "misc") || "misc").trim() || "misc";
+        const qtyIn = Number(window.prompt("Quantity:", "1"));
+        const qty = Number.isFinite(qtyIn) && qtyIn > 0 ? Math.floor(qtyIn) : 1;
+        s2.party.sharedItems.push({ name, type, qty });
+        saveSettings();
+        render();
+    });
+
+    $(document).on("click.party", "#uie-party-window .party-inv-del", function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        const idx = Number($(this).attr("data-idx"));
+        if (!Number.isFinite(idx)) return;
+        const s2 = getSettings();
+        ensureParty(s2);
+        if (!Array.isArray(s2.party.sharedItems)) s2.party.sharedItems = [];
+        if (idx < 0 || idx >= s2.party.sharedItems.length) return;
+        s2.party.sharedItems.splice(idx, 1);
+        saveSettings();
+        render();
+    });
+
+    $(document).on("click.party", "#uie-party-window .party-slot", function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        const slot = String($(this).attr("data-slot") || "").trim();
+        if (!slot) return;
+        const s2 = getSettings();
+        ensureParty(s2);
+        const memberId = String($("#party-gear-member").val() || selectedId || "");
+        const m = memberId ? getMember(s2, memberId) : null;
+        if (!m) return;
+        ensureMember(m);
+        const shared = Array.isArray(s2.party.sharedItems) ? s2.party.sharedItems : [];
+        const names = shared.map((it, i) => `${i + 1}. ${String(it?.name || "Item")} (${String(it?.type || "misc")})`);
+        const msg = `Equip slot: ${slot}\n0. Unequip\n${names.join("\n")}\n\nEnter number:`;
+        const pick = Number(window.prompt(msg, "0"));
+        if (!Number.isFinite(pick)) return;
+        if (pick <= 0) {
+            if (m.equipment && m.equipment[slot]) delete m.equipment[slot];
+            saveSettings();
+            render();
+            return;
+        }
+        const chosen = shared[pick - 1];
+        if (!chosen) return;
+        m.equipment[slot] = {
+            name: String(chosen.name || "Item"),
+            type: String(chosen.type || "misc"),
+            img: String(chosen.img || "")
+        };
+        saveSettings();
+        render();
+    });
+
+    $(document).on("click.party", "#uie-party-window #uie-party-bg-edit", async function (e) {
         e.preventDefault();
         e.stopPropagation();
         const s2 = getSettings();
@@ -1114,7 +1798,7 @@ export function initParty() {
         render();
     });
 
-    $modal.on("click.party", "#uie-party-member-bg-edit", async function (e) {
+    $(document).on("click.party", "#uie-party-member-modal #uie-party-member-bg-edit", async function (e) {
         e.preventDefault();
         e.stopPropagation();
         const s2 = getSettings();
@@ -1132,7 +1816,7 @@ export function initParty() {
         }
     });
 
-    $win.on("click.party pointerup.party", ".party-row", function(e) {
+    $(document).on("click.party pointerup.party", "#uie-party-window .party-row", function(e) {
         if (e.type === "pointerup") {
             const pt = String(e.pointerType || "").toLowerCase();
             if (pt && pt !== "touch" && pt !== "pen") return;
@@ -1146,10 +1830,11 @@ export function initParty() {
             const t = Number(lastTouchOpenAt || 0);
             if (t && Date.now() - t < 650) return;
         }
-        openMemberModal(getSettings(), String($(this).data("id")));
+        const id = String($(this).data("id"));
+        setTimeout(() => openMemberModal(getSettings(), id), 0);
     });
 
-    $win.on("click.party pointerup.party", ".party-form-member", function(e) {
+    $(document).on("click.party pointerup.party", "#uie-party-window .party-form-member", function(e) {
         if (e.type === "pointerup") {
             const pt = String(e.pointerType || "").toLowerCase();
             if (pt && pt !== "touch" && pt !== "pen") return;
@@ -1163,23 +1848,35 @@ export function initParty() {
             const t = Number(lastTouchOpenAt || 0);
             if (t && Date.now() - t < 650) return;
         }
-        openMemberModal(getSettings(), String($(this).data("id")));
+        const id = String($(this).data("id"));
+        setTimeout(() => openMemberModal(getSettings(), id), 0);
     });
 
-    $modal.on("click.party", "#uie-party-member-close", function(e){
+    $body.on("click.party pointerup.party", "[id='uie-party-member-modal'] [id='uie-party-member-close']", function(e){
         e.preventDefault();
         e.stopPropagation();
+        e.stopImmediatePropagation();
         closeMemberModal();
     });
 
-    $modal.on("click.party", function(e){
-        if (e.target && e.target.id !== "uie-party-member-modal") return;
-        e.preventDefault();
+    $body.on("click.party pointerup.party", "[id='uie-party-member-modal']", function(e){
         e.stopPropagation();
+        e.stopImmediatePropagation();
+        if ($(e.target).closest("[id='uie-party-member-card']").length) return;
+        if ($(e.target).closest("[id='uie-party-member-close']").length) {
+            closeMemberModal();
+            return;
+        }
+        const now = Date.now();
+        const openedAgo = now - Number(memberModalOpenedAt || 0);
+        if (ignoreNextBackdropClick || openedAgo < 220) {
+            ignoreNextBackdropClick = false;
+            return;
+        }
         closeMemberModal();
     });
 
-    $modal.on("click.party", "#party-paperdoll-pick", async function(e){
+    $(document).on("click.party", "#uie-party-member-modal #party-paperdoll-pick", async function(e){
         e.preventDefault();
         e.stopPropagation();
         const s2 = getSettings();
@@ -1188,7 +1885,7 @@ export function initParty() {
         await pickPortraitForMember(s2, m, "paperDoll");
     });
 
-    $modal.on("click.party", "#party-mm-add-skill", function (e) {
+    $(document).on("click.party", "#uie-party-member-modal #party-mm-add-skill", function (e) {
         e.preventDefault();
         e.stopPropagation();
         const s2 = getSettings();
@@ -1200,7 +1897,7 @@ export function initParty() {
         renderMemberModal(s2, m);
     });
 
-    $modal.on("click.party", ".party-mm-skill-del", function (e) {
+    $(document).on("click.party", "#uie-party-member-modal .party-mm-skill-del", function (e) {
         e.preventDefault();
         e.stopPropagation();
         const idx = Number($(this).data("skill-del"));
@@ -1216,7 +1913,7 @@ export function initParty() {
         try { injectRpEvent(`[System: Removed skill '${removed?.name || "Unknown"}' from ${m.identity.name}.]`); } catch (_) {}
     });
 
-    $modal.on("click.party", "#party-mm-save", function(e){
+    $(document).on("click.party", "#uie-party-member-modal #party-mm-save", function(e){
         e.preventDefault();
         e.stopPropagation();
         const s2 = getSettings();
@@ -1274,23 +1971,25 @@ export function initParty() {
         renderMemberModal(s2, m);
     });
 
-    $modal.on("click.party", ".party-fx", function (e) {
+    $(document).on("click.party", "#uie-party-member-modal .party-fx", function (e) {
         e.preventDefault();
         e.stopPropagation();
         const txt = String(this.getAttribute("title") || "").trim();
         if (!txt) return;
         let box = document.getElementById("uie-party-fx-pop");
+        const popZ = String(getMemberModalZIndex() + 2);
         if (!box) {
             box = document.createElement("div");
             box.id = "uie-party-fx-pop";
-            box.style.cssText = "position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);z-index:2147483656;max-width:min(380px,92vw);padding:12px 14px;border-radius:16px;border:1px solid rgba(255,255,255,0.12);background:rgba(15,10,8,0.96);color:#fff;font-weight:900;";
+            box.style.cssText = `position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);z-index:${popZ};max-width:min(380px,92vw);padding:12px 14px;border-radius:16px;border:1px solid rgba(255,255,255,0.12);background:rgba(15,10,8,0.96);color:#fff;font-weight:900;`;
             document.body.appendChild(box);
             box.addEventListener("click", () => { try { box.remove(); } catch (_) {} });
         }
+        box.style.zIndex = popZ;
         box.textContent = txt;
     });
 
-    $modal.on("click.party", ".party-skill", function (e) {
+    $(document).on("click.party", "#uie-party-member-modal .party-skill", function (e) {
         e.preventDefault();
         e.stopPropagation();
         const name = String(this.getAttribute("data-name") || "").trim();
@@ -1298,17 +1997,19 @@ export function initParty() {
         const txt = desc ? `${name}\n\n${desc}` : name;
         if (!txt.trim()) return;
         let box = document.getElementById("uie-party-skill-pop");
+        const popZ = String(getMemberModalZIndex() + 2);
         if (!box) {
             box = document.createElement("div");
             box.id = "uie-party-skill-pop";
-            box.style.cssText = "position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);z-index:2147483647;max-width:min(420px,92vw);max-height:min(60vh,520px);overflow:auto;white-space:pre-wrap;padding:12px 14px;border-radius:16px;border:1px solid rgba(255,255,255,0.12);background:rgba(15,10,8,0.96);color:#fff;font-weight:900;";
+            box.style.cssText = `position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);z-index:${popZ};max-width:min(420px,92vw);max-height:min(60vh,520px);overflow:auto;white-space:pre-wrap;padding:12px 14px;border-radius:16px;border:1px solid rgba(255,255,255,0.12);background:rgba(15,10,8,0.96);color:#fff;font-weight:900;`;
             document.body.appendChild(box);
             box.addEventListener("click", () => { try { box.remove(); } catch (_) {} });
         }
+        box.style.zIndex = popZ;
         box.textContent = txt;
     });
 
-    $win.on("click.party", ".party-mini", function(e) {
+    $(document).on("click.party", "#uie-party-window .party-mini", function(e) {
         e.stopPropagation();
         const act = $(this).data("act");
         const id = String($(this).data("id"));
@@ -1375,7 +2076,7 @@ export function initParty() {
         }
     });
 
-    $win.on("change.party", "#party-tac-preset, #party-tac-conserve, #party-tac-protect-leader", function(e){
+    $(document).on("change.party", "#uie-party-window #party-tac-preset, #uie-party-window #party-tac-conserve, #uie-party-window #party-tac-protect-leader", function(e){
         e.preventDefault();
         const s2 = getSettings();
         ensureParty(s2);
@@ -1386,7 +2087,7 @@ export function initParty() {
         saveSettings();
     });
 
-    $win.on("change.party", ".member-tac-preset, .member-tac-focus, .member-tac-protect, .member-tac-mana", function(e){
+    $(document).on("change.party", "#uie-party-window .member-tac-preset, #uie-party-window .member-tac-focus, #uie-party-window .member-tac-protect, #uie-party-window .member-tac-mana", function(e){
         e.preventDefault();
         const id = String($(this).data("id") || "");
         if (!id) return;
@@ -1403,7 +2104,7 @@ export function initParty() {
         saveSettings();
     });
 
-    $win.on("click.party", ".form-add", function(e){
+    $(document).on("click.party", "#uie-party-window .form-add", function(e){
         e.preventDefault();
         e.stopPropagation();
         const lane = String($(this).data("lane") || "");
@@ -1421,7 +2122,7 @@ export function initParty() {
         render();
     });
 
-    $win.on("click.party", ".form-rm", function(e){
+    $(document).on("click.party", "#uie-party-window .form-rm", function(e){
         e.preventDefault();
         e.stopPropagation();
         const lane = String($(this).data("lane") || "");
@@ -1435,7 +2136,7 @@ export function initParty() {
         render();
     });
 
-    $win.on("click.party", ".form-mv", function(e){
+    $(document).on("click.party", "#uie-party-window .form-mv", function(e){
         e.preventDefault();
         e.stopPropagation();
         const act = String($(this).data("act") || "");
@@ -1458,7 +2159,7 @@ export function initParty() {
         render();
     });
 
-    $win.on("change.party", ".form-role", function(e){
+    $(document).on("change.party", "#uie-party-window .form-role", function(e){
         e.preventDefault();
         const id = String($(this).data("id") || "");
         if (!id) return;
@@ -1472,7 +2173,7 @@ export function initParty() {
         render();
     });
 
-    $win.on("click.party", "#pm-save", function() {
+    $(document).on("click.party", "#uie-party-window #pm-save", function() {
         const s = getSettings();
         const m = getMember(s, selectedId);
         if (!m) return;
@@ -1497,7 +2198,7 @@ export function initParty() {
         m.notes = $("#pm-notes").val();
         m.customCSS = $("#pm-css").val();
 
-        const isUser = Array.isArray(m.roles) && m.roles.includes("User");
+        const isUser = isUserMember(s, m);
         if (isUser) {
             applyMemberToCore(s, m);
             try { $(document).trigger("uie:updateVitals"); } catch (_) {}
@@ -1508,7 +2209,7 @@ export function initParty() {
         render();
     });
 
-    $win.on("click.party", "#party-pick-portrait", async function() {
+    $(document).on("click.party", "#uie-party-window #party-pick-portrait", async function() {
         const id = $(this).data("id");
         const s = getSettings();
         const m = getMember(s, id);
@@ -1523,4 +2224,5 @@ export function initParty() {
 
     render();
 }
+
 

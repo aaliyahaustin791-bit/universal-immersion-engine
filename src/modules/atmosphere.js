@@ -1,4 +1,4 @@
-
+﻿
 import { getSettings } from "./core.js";
 
 const TIME_FILTERS = {
@@ -72,6 +72,8 @@ let _mouseY = 0;
 let _lastParallaxAt = 0;
 let _lastPx = 0;
 let _lastPy = 0;
+let atmosphereSyncInterval = null;
+let sensoryEventsBound = false;
 
 function initSensoryEvents() {
     // Mouse
@@ -225,9 +227,25 @@ export function updateAtmosphere(text = "") {
 
 export function initAtmosphere() {
     console.log("[UIE] Atmosphere Engine Initialized");
-    initSensoryEvents();
-    setInterval(() => {
+    if (!sensoryEventsBound) {
+        initSensoryEvents();
+        sensoryEventsBound = true;
+    }
+    if (atmosphereSyncInterval) return;
+
+    atmosphereSyncInterval = setInterval(() => {
+        try {
+            if (document.hidden) return;
+            const stage = document.getElementById("reality-stage");
+            if (!stage) return;
+            const stageStyle = window.getComputedStyle(stage);
+            if (stageStyle.display === "none" || stageStyle.visibility === "hidden") return;
+        } catch (_) {
+            return;
+        }
+
         // Periodic check to sync with world state settings if chat isn't moving
-        updateAtmosphere(""); 
+        updateAtmosphere("");
     }, 5000);
 }
+
