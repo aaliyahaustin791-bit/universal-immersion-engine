@@ -152,25 +152,8 @@ function initStWandUieControls() {
             try { $("#extensionsMenuButton").removeClass("active"); } catch (_) {}
 
             try {
-                // Primary path: direct unified scanner (forced).
-                const st = await import("./stateTracker.js");
-                const scanResult = await st.scanEverything?.({ force: true });
-                try {
-                    const ev = new CustomEvent("uie:state_updated", { detail: { manual: true, from: "wand_button", forceAll: true, summary: scanResult?.summary || null } });
-                    window.dispatchEvent(ev);
-                } catch (_) {}
-                try {
-                    const sum = scanResult?.summary || null;
-                    if (sum) {
-                        const bits = Object.entries(sum).filter(([, v]) => Number(v)).map(([k, v]) => `${k} ${v > 0 ? "+" : ""}${v}`);
-                        if (bits.length) window.toastr?.info?.(`AI changes: ${bits.join(", ")}`);
-                    }
-                } catch (_) {}
-                try { window.toastr?.success?.("UIE scan complete."); } catch (_) {}
-
-                // Secondary pass: orchestration/module sync helpers.
                 const { scanAll } = await import("./orchestration.js");
-                await scanAll?.();
+                await scanAll?.({ force: true, source: "wand_button" });
             } catch (err) {
                 console.error("Scan failed", err);
                 try { window.toastr?.error?.("UIE scan failed. Check console."); } catch (_) {}
@@ -2375,4 +2358,5 @@ function spawnContextMenu(x, y, title, options) {
     if (rect.right > window.innerWidth) menu.style.left = (window.innerWidth - rect.width - 10) + "px";
     if (rect.bottom > window.innerHeight) menu.style.top = (window.innerHeight - rect.height - 10) + "px";
 }
+
 

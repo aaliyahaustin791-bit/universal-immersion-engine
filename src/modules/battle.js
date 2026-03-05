@@ -654,7 +654,7 @@ function startAuto() {
         autoLastAt = now;
         try {
           const mod = await import("./stateTracker.js");
-          if (mod?.scanEverything) await mod.scanEverything();
+          if (mod?.scanEverything) await mod.scanEverything({ scope: "battle" });
         } finally { autoInFlight = false; }
       }, 2500);
     } catch (_) {}
@@ -764,6 +764,7 @@ export function initBattle() {
 
   renderBattle();
 }
+
 
 
 

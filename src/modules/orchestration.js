@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Orchestration Engine - Prevents multi-botting in group chats
  * Listens for generation events and injects safety measures
  */
@@ -7,11 +7,26 @@ import { getSettings, saveSettings } from "./core.js";
 import { notify } from "./notifications.js";
 
 let orchestrationEnabled = true;
+let scanAllInFlight = false;
+let scanAllLastAt = 0;
 
 /**
  * Trigger Databank/UIE Content Scan
  */
-export async function scanAll() {
+export async function scanAll(opts = {}) {
+    const now = Date.now();
+    if (scanAllInFlight) {
+        notify("info", "Scan already running. Please wait.", "Scanner");
+        return;
+    }
+    if (now - scanAllLastAt < 1200) {
+        notify("info", "Scan already triggered. Please wait.", "Scanner");
+        return;
+    }
+
+    scanAllInFlight = true;
+    scanAllLastAt = now;
+
     try {
         notify("info", "Starting Full UIE Scan...", "Scanner");
         console.log("[UIE] Starting manual scanAll...");
@@ -25,7 +40,6 @@ export async function scanAll() {
                 async () => { const m = await import("./features/assets.js"); m.render?.(); m.init?.(); },
                 async () => { const m = await import("./features/life.js"); m.render?.(); m.init?.(); },
                 async () => { const m = await import("./features/equipment.js"); m.render?.(); m.init?.(); },
-                async () => { const m = await import("./world.js"); m.initWorld?.(); m.render?.(); },
                 async () => { const m = await import("./map.js"); m.render?.(); m.initMap?.(); },
                 async () => { const m = await import("./party.js"); m.render?.(); m.initParty?.(); },
                 async () => { const m = await import("./social.js"); m.render?.(); m.initSocial?.(); },
@@ -80,9 +94,11 @@ export async function scanAll() {
                 notify("success", "Databank/Inventory Source Scanned", "Scanner");
             } else {
                 console.warn("[UIE] Vector Storage extension not found or command missing.");
-                // Fallback: Try to trigger UIE's internal databank scan if it exists
-                const { initDatabank } = await import("./databank.js");
-                initDatabank?.();
+                // Fallback: run UIE internal databank scan + refresh
+                const db = await import("./databank.js");
+                try { await db.scanDatabankFromChat?.({ maxMessages: 80, silent: true }); } catch (_) {}
+                db.initDatabank?.();
+                db.render?.();
                 notify("info", "Internal Databank Refreshed", "Scanner");
             }
         } catch (e) { console.warn("[UIE] Databank scan failed", e); }
@@ -100,12 +116,7 @@ export async function scanAll() {
             if (invLegacy.initInventory) invLegacy.initInventory();
         } catch (e) { console.warn("[UIE] Inventory scan failed", e); }
 
-        // 4. Scan World/Map
-        try {
-            const { initWorld } = await import("./world.js");
-            initWorld?.();
-            notify("info", "World Map Data Synced", "Scanner");
-        } catch (e) { console.warn("[UIE] World scan failed", e); }
+        // 4. Reality Engine (World) intentionally excluded from Scan All.
 
         // 5. Force update of UI layouts
         try {
@@ -123,6 +134,8 @@ export async function scanAll() {
     } catch (e) {
         console.error("[UIE] ScanAll Error:", e);
         notify("error", "Scan Failed: " + e.message, "Scanner");
+    } finally {
+        scanAllInFlight = false;
     }
 }
 
@@ -475,3 +488,8 @@ export function setOrchestrationEnabled(enabled) {
     s.orchestration.enabled = enabled;
     saveSettings();
 }
+
+
+
+
+

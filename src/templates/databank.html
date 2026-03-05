@@ -1,4 +1,4 @@
-<style>
+﻿<style>
   #uie-databank-window{ top: 80px; left: 80px; transform:none; flex-direction: column !important; overflow: hidden; }
   #uie-databank-window .uie-header{ height: 32px !important; min-height: 32px !important; padding: 0 8px !important; flex-shrink: 0 !important; display: flex !important; align-items: center !important; z-index: 10 !important; font-size: 0.9em !important; }
   #uie-databank-window .uie-header h2{ font-size: 1.1em !important; margin: 0 !important; line-height: 1 !important; }
@@ -54,6 +54,9 @@
         <div id="uie-db-view-social" style="display:none; padding:15px;">
             <div style="display:flex; gap:10px; align-items:center; margin-bottom:10px;">
                 <input id="uie-db-social-search" type="text" placeholder="Search profiles..." style="flex:1; background:rgba(0,0,0,0.25); border:1px solid rgba(0,240,255,0.3); color:#fff; padding:8px 10px; outline:none;">
+                <button id="uie-db-social-scan" style="background:rgba(0,240,255,0.1); border:1px solid #00f0ff; color:#00f0ff; padding:8px 10px; cursor:pointer; font-weight:900; font-size:11px; display:flex; align-items:center; gap:6px; white-space:nowrap;">
+                    <i class="fa-solid fa-arrows-rotate"></i> SCAN DATABANK
+                </button>
             </div>
             <div id="uie-db-social-list"></div>
         </div>
@@ -77,3 +80,4 @@
         <div id="uie-db-social-mem-empty" style="display:none; text-align:center; color:rgba(0,240,255,0.55); margin-top:18px;">NO MEMORIES SAVED</div>
     </div>
 </div>
+

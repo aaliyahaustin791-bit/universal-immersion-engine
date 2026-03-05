@@ -32,6 +32,62 @@ function newId(prefix) {
     return `${String(prefix || "id")}_${Date.now().toString(16)}_${Math.floor(Math.random() * 1e9).toString(16)}`;
 }
 
+function normalizeAffinity(value, fallback = 50) {
+    const fb = Number.isFinite(Number(fallback)) ? Number(fallback) : 50;
+    const n = Number(value);
+    if (!Number.isFinite(n)) return Math.max(0, Math.min(100, Math.round(fb)));
+    return Math.max(0, Math.min(100, Math.round(n)));
+}
+
+function cleanFieldValue(value, maxLen = 160) {
+    const cap = Math.max(1, Number(maxLen) || 160);
+    return String(value ?? "").trim().slice(0, cap);
+}
+
+function firstNonEmpty(...values) {
+    for (const v of values) {
+        const s = String(v ?? "").trim();
+        if (s) return s;
+    }
+    return "";
+}
+
+function toBoolFlag(value) {
+    if (value === true) return true;
+    if (value === false) return false;
+    const s = String(value ?? "").trim().toLowerCase();
+    return s === "1" || s === "true" || s === "yes" || s === "y";
+}
+
+function derivePresenceFlags(scanObj) {
+    const presence = String(scanObj?.presence || "").trim().toLowerCase();
+    const met =
+        toBoolFlag(scanObj?.met_physically) ||
+        presence === "present" ||
+        presence === "in_scene" ||
+        presence === "in scene" ||
+        presence === "onscreen" ||
+        presence === "met";
+    const knownPast =
+        !met &&
+        (toBoolFlag(scanObj?.known_from_past) ||
+            presence === "known_past" ||
+            presence === "known past" ||
+            presence === "from_past" ||
+            presence === "from past" ||
+            presence === "history");
+    return { met, knownPast };
+}
+
+function maybeUpdateTextField(person, field, value, maxLen = 160) {
+    const next = cleanFieldValue(value, maxLen);
+    if (!next) return false;
+    const prev = cleanFieldValue(person?.[field], maxLen);
+    if (prev === next) return false;
+    person[field] = next;
+    return true;
+}
+
 function baseUrl() {
     try {
         const u = String(window.UIE_BASEURL || "");
@@ -111,21 +167,28 @@ function findAvatarForNameFromChat(name) {
 
 function normalizeSocial(s) {
     if(!s.social) s.social = { friends: [], associates: [], romance: [], family: [], rivals: [] };
-    ["friends","associates","romance","family","rivals"].forEach(k => { if(!Array.isArray(s.social[k])) s.social[k] = []; });
-    if (!s.socialMeta || typeof s.socialMeta !== "object") s.socialMeta = { autoScan: false, deletedNames: [] };
-    if (!Array.isArray(s.socialMeta.deletedNames)) s.socialMeta.deletedNames = [];
     ["friends","associates","romance","family","rivals"].forEach(k => {
         (s.social[k] || []).forEach(p => {
             if (!p || typeof p !== "object") return;
             if (!p.id) p.id = newId("person");
+            if (p.thoughts === undefined) p.thoughts = "";
+            if (p.likes === undefined) p.likes = "";
+            if (p.dislikes === undefined) p.dislikes = "";
+            if (p.birthday === undefined) p.birthday = "";
+            if (p.location === undefined) p.location = "";
+            if (p.age === undefined) p.age = "";
+            if (p.knownFamily === undefined) p.knownFamily = "";
             if (p.familyRole === undefined) p.familyRole = "";
             if (p.relationshipStatus === undefined) p.relationshipStatus = "";
+            if (p.url === undefined) p.url = "";
+            if (p.avatar === undefined) p.avatar = "";
             if (p.met_physically === undefined) p.met_physically = false;
             if (p.known_from_past === undefined) p.known_from_past = false;
             if (!Array.isArray(p.memories)) p.memories = [];
+            if (p.affinity === undefined || p.affinity === null || p.affinity === "") p.affinity = 50;
+            p.affinity = normalizeAffinity(p.affinity, 50);
         });
     });
-
     const hateThreshold = 20;
     const rivals = s.social.rivals;
     const rivalNames = new Set(rivals.map(p => String(p?.name || "").toLowerCase()).filter(Boolean));
@@ -133,7 +196,7 @@ function normalizeSocial(s) {
     const moveToRivals = (arr) => {
         const keep = [];
         for (const p of arr) {
-            const aff = Number(p?.affinity ?? 0);
+            const aff = normalizeAffinity(p?.affinity, 50);
             const name = String(p?.name || "");
             if (name && aff <= hateThreshold) {
                 const key = name.toLowerCase();
@@ -572,7 +635,7 @@ function openAddModal({ mode, index }) {
     $("#uie-add-family-role").val(p.familyRole || "");
     $("#uie-add-rel-status").val(p.relationshipStatus || "");
     $("#uie-add-tab").val(p.tab || currentTab);
-    $("#uie-add-affinity").val(Number(p.affinity || 0));
+    $("#uie-add-affinity").val(Number.isFinite(Number(p?.affinity)) ? Number(p.affinity) : 50);
     $("#uie-add-url").val(p.url || "");
     $("#uie-add-bday").val(p.birthday || "");
     $("#uie-add-loc").val(p.location || "");
@@ -609,7 +672,7 @@ function applyAddOrEdit() {
     if (!name) return;
 
     const tab = String($("#uie-add-tab").val() || currentTab);
-    const affinity = Math.max(0, Math.min(100, Number($("#uie-add-affinity").val() || 0)));
+    const affinity = normalizeAffinity($("#uie-add-affinity").val(), 50);
     const person = {
         name,
         age: String($("#uie-add-age").val() || "").trim(),
@@ -930,155 +993,245 @@ Rules:
 }
 
 async function scanChatIntoSocial({ silent } = {}) {
+    const now = Date.now();
     if (autoScanInFlight) {
         if (!silent) notify("info", "Social scan already running.", "Social", "social");
         return;
     }
-    autoScanInFlight = true;
-    autoScanLastAt = Date.now();
-    try {
-
-    const s = getSettings();
-    normalizeSocial(s);
-    const ctx = getContext ? getContext() : {};
-    const userName = String(ctx?.name1 || "").trim();
-    const mainCharName = String(ctx?.name2 || "").trim();
-    const deleted = deletedNameSet(s);
-    const userNames = [userName, mainCharName].filter(Boolean);
-
-    // Grab raw text logic
-    const transcript = await getChatTranscript(240);
-    if (!transcript) {
-        if (!silent) notify("info", "No chat transcript found.", "Social", "social");
-        autoScanInFlight = false;
+    if (now - autoScanLastAt < 1500) {
+        if (!silent) notify("info", "Social scan already triggered. Please wait a moment.", "Social", "social");
         return;
     }
 
-    const prompt = `[UIE_LOCKED]
+    autoScanInFlight = true;
+    autoScanLastAt = now;
+
+    try {
+        const s = getSettings();
+        normalizeSocial(s);
+
+        const ctx = getContext ? getContext() : {};
+        const userName = String(ctx?.name1 || "").trim();
+        const mainCharName = String(ctx?.name2 || "").trim();
+        const deleted = deletedNameSet(s);
+        const userNames = [userName, mainCharName].filter(Boolean);
+
+        // Keep scan window large enough to consistently include context depth.
+        const transcript = await getChatTranscript(240);
+        if (!transcript) {
+            if (!silent) notify("info", "No chat transcript found.", "Social", "social");
+            return;
+        }
+
+        const prompt = `[UIE_LOCKED]
 Analyze the following chat transcript to find characters/people for the Social Contacts list.
 User Name: "${userName}"
 
 Transcript:
-${transcript.slice(-14000)}
+${transcript.slice(-22000)}
 
-Task: Identify all characters (NPCs, people) mentioned or present in the story.
+Task: Identify characters (NPCs/people) mentioned or present in the story and return profile fields.
 Return ONLY valid JSON:
-{"found":[{"name":"Name","role":"friend|rival|romance|family|associate|npc","affinity":50,"presence":"present|mentioned"}]}
+{"found":[{"name":"Name","role":"friend|rival|romance|family|associate|npc","affinity":50,"presence":"present|mentioned|known_past","relationshipStatus":"","thoughts":"","location":"","age":"","knownFamily":"","familyRole":"","birthday":"","likes":"","dislikes":"","url":"","met_physically":false,"known_from_past":false}]}
 
 Rules:
-- "name": Extract the name exactly as it appears (e.g. "The Shopkeeper" -> "Shopkeeper", "John Doe" -> "John Doe").
-- "presence": "present" if they are physically in the scene interacting. "mentioned" if only talked about/remembered.
-- "role": Guess the relationship role based on context.
-- Exclude: The user ("${userName}"), "System", "Narrator", "Game Master", "Omniscient", and any tool/meta/control card names used to run NPCs.
-- Include everyone else found in the text, even if they didn't speak (e.g. "Bob stood silently in the corner").
-`;
+- Include everyone found in transcript context. Do not invent.
+- Exclude user/system/meta/tool controller names.
+- affinity must be 0..100; if unknown use 50.
+- Fill unknown text fields with empty string.
+- name must be concise and stable.`;
 
-    try { window.toastr?.info?.("Scanning story for characters..."); } catch (_) {}
+        try { window.toastr?.info?.("Scanning story for characters..."); } catch (_) {}
 
-    let found = [];
-    let res = "";
-    try {
-        res = await generateContent(prompt, "Social Scan");
-    } catch (_) {
-        res = "";
-    }
-
-    if (res) {
-        const obj = safeJsonParseObject(res) || {};
-        if (Array.isArray(obj?.found)) {
-            found = obj.found;
-        } else if (Array.isArray(obj?.names)) {
-            found = obj.names
-                .map((name) => ({ name: String(name || "").trim(), role: "associate", affinity: 50, presence: "mentioned" }))
-                .filter((x) => x.name);
-        }
-    }
-
-    if (!found.length) {
+        let found = [];
+        let res = "";
         try {
-            const alt = await aiExtractNamesFromChat(240);
-            const names = Array.isArray(alt?.names) ? alt.names : [];
-            found = names
-                .map((name) => ({ name: String(name || "").trim(), role: "associate", affinity: 50, presence: "mentioned" }))
-                .filter((x) => x.name);
-        } catch (_) {}
-    }
+            res = await generateContent(prompt, "Social Scan");
+        } catch (_) {
+            res = "";
+        }
 
-    if (!found.length) {
-        if (!silent) notify("info", "No new characters found in chat.", "Social", "social");
-        autoScanInFlight = false;
-        return;
-    }
+        if (res) {
+            const obj = safeJsonParseObject(res) || {};
+            if (Array.isArray(obj?.found)) {
+                found = obj.found;
+            } else if (Array.isArray(obj?.names)) {
+                found = obj.names
+                    .map((name) => ({ name: String(name || "").trim(), role: "associate", affinity: 50, presence: "mentioned" }))
+                    .filter((x) => x.name);
+            }
+        }
 
-    const normalizeRoleToTab = (role) => {
-        const r = String(role || "").toLowerCase();
-        if (r.includes("romance") || r.includes("lover") || r.includes("dating")) return "romance";
-        if (r.includes("family") || r.includes("sister") || r.includes("brother") || r.includes("mother") || r.includes("father")) return "family";
-        if (r.includes("rival") || r.includes("enemy") || r.includes("hostile")) return "rivals";
-        if (r.includes("associate") || r.includes("acquaintance") || r.includes("contact") || r.includes("npc") || r.includes("merchant") || r.includes("stranger")) return "associates";
-        return "friends";
-    };
+        if (!found.length) {
+            try {
+                const alt = await aiExtractNamesFromChat(240);
+                const names = Array.isArray(alt?.names) ? alt.names : [];
+                found = names
+                    .map((name) => ({ name: String(name || "").trim(), role: "associate", affinity: 50, presence: "mentioned" }))
+                    .filter((x) => x.name);
+            } catch (_) {}
+        }
 
-    const existingLower = new Set(["friends","associates","romance","family","rivals"].flatMap(k => (s.social[k] || []).map(p => normalizeNameKey(p?.name || "")).filter(Boolean)));
-    let added = 0;
-    let accepted = 0;
+        if (!found.length) {
+            if (!silent) notify("info", "No characters found in chat.", "Social", "social");
+            return;
+        }
 
-    for (const v of found) {
-        const nm = String(v?.name || "").trim();
-        if (!nm) continue;
-        const key = normalizeNameKey(nm);
-        if (shouldExcludeName(nm, { userNames, deletedSet: deleted })) continue;
-        if (existingLower.has(key)) continue;
-        accepted++;
-        if (accepted > 30) break;
-
-        const presence = String(v?.presence || "").toLowerCase().trim();
-        const met = presence === "present";
-        const knownPast = presence === "known_past"; // AI might infer this
-        const tabRaw = String(v?.role || "").toLowerCase().trim(); // v.role mapped to tab sometimes
-
-        // Logic to decide tab
-        const tab = normalizeRoleToTab(v?.role || "associate");
-        const aff = Math.max(0, Math.min(100, Math.round(Number(v?.affinity ?? 50))));
-        const role = String(v?.role || (met ? "npc" : "mentioned")).trim().slice(0, 80);
-
-        const p = {
-            id: newId("person"),
-            name: nm,
-            affinity: aff,
-            thoughts: "",
-            avatar: "",
-            likes: "",
-            dislikes: "",
-            birthday: "",
-            location: "",
-            age: "",
-            knownFamily: "",
-            familyRole: "",
-            relationshipStatus: role,
-            url: "",
-            tab,
-            memories: [],
-            met_physically: met,
-            known_from_past: knownPast
+        const normalizeRoleToTab = (role, affinity = 50, familyRole = "", relationshipStatus = "") => {
+            const r = `${String(role || "")} ${String(relationshipStatus || "")} ${String(familyRole || "")}`.toLowerCase();
+            if (r.includes("family") || r.includes("mother") || r.includes("father") || r.includes("sister") || r.includes("brother") || r.includes("daughter") || r.includes("son")) return "family";
+            if (r.includes("romance") || r.includes("lover") || r.includes("dating") || r.includes("spouse") || r.includes("wife") || r.includes("husband")) return "romance";
+            if (r.includes("rival") || r.includes("enemy") || r.includes("hostile") || Number(affinity) <= 20) return "rivals";
+            if (r.includes("associate") || r.includes("acquaintance") || r.includes("contact") || r.includes("npc") || r.includes("merchant") || r.includes("stranger")) return "associates";
+            return "friends";
         };
 
-        // If "associate" but affinity is high/low, maybe move? For now stick to AI guess.
-        // But force "associates" if just mentioned?
-        // User wants "PULLING CHARACTERS FROM STORY". So if they are in story, add them.
+        const tabPriority = { friends: 1, associates: 2, family: 3, romance: 4, rivals: 5 };
+        const tabs = ["friends", "associates", "romance", "family", "rivals"];
+        const findByNameKey = (nameKey) => {
+            for (const tab of tabs) {
+                const idx = (s.social[tab] || []).findIndex(p => normalizeNameKey(p?.name || "") === nameKey);
+                if (idx >= 0) return { tab, idx, person: s.social[tab][idx] };
+            }
+            return { tab: "friends", idx: -1, person: null };
+        };
 
-        s.social[tab].push(p);
-        existingLower.add(key);
-        added++;
-    }
+        let added = 0;
+        let updated = 0;
+        let accepted = 0;
+        const seenThisRun = new Set();
 
-    if (added) {
-        commitStateUpdate({ save: true, layout: false, emit: true });
-        renderSocial();
-        if (!silent) notify("success", `Added ${added} character(s) from story.`, "Social", "social");
-    } else {
-        if (!silent) notify("info", "No new characters added (all exist or ignored).", "Social", "social");
-    }
+        for (const v of found) {
+            const nm = cleanFieldValue(v?.name, 64);
+            if (!nm) continue;
+
+            const key = normalizeNameKey(nm);
+            if (!key || seenThisRun.has(key)) continue;
+            seenThisRun.add(key);
+
+            if (shouldExcludeName(nm, { userNames, deletedSet: deleted })) continue;
+            accepted++;
+            if (accepted > 40) break;
+
+            const flags = derivePresenceFlags(v);
+            const familyRole = cleanFieldValue(firstNonEmpty(v?.familyRole, v?.family_role), 80);
+            const relationshipRaw = cleanFieldValue(firstNonEmpty(v?.relationshipStatus, v?.relationship, v?.status, v?.role), 80);
+            const aff = normalizeAffinity(v?.affinity, 50);
+            const tab = normalizeRoleToTab(v?.role || relationshipRaw, aff, familyRole, relationshipRaw);
+
+            const thoughts = cleanFieldValue(firstNonEmpty(v?.thoughts, v?.notes, v?.summary, v?.description), 240);
+            const location = cleanFieldValue(v?.location, 120);
+            const age = cleanFieldValue(v?.age, 40);
+            const knownFamily = cleanFieldValue(firstNonEmpty(v?.knownFamily, v?.known_family, v?.family), 120);
+            const birthday = cleanFieldValue(v?.birthday, 48);
+            const likes = cleanFieldValue(v?.likes, 180);
+            const dislikes = cleanFieldValue(v?.dislikes, 180);
+            const url = safeUrl(cleanFieldValue(v?.url, 240));
+            const avatar = findAvatarForNameFromChat(nm);
+
+            let relationshipStatus = relationshipRaw;
+            if (!relationshipStatus && tab === "family") relationshipStatus = familyRole ? `Family: ${familyRole}` : "Family";
+            if (!relationshipStatus && tab === "romance") relationshipStatus = "Romantic connection";
+            if (!relationshipStatus && tab === "rivals") relationshipStatus = "Hostile / rival";
+            if (!relationshipStatus && tab === "friends") relationshipStatus = "Friendly";
+            if (!relationshipStatus) relationshipStatus = flags.met ? "Known contact" : "Mentioned in story";
+
+            const hit = findByNameKey(key);
+            if (hit.person) {
+                const person = hit.person;
+                let changed = false;
+
+                if (!person.id) { person.id = newId("person"); changed = true; }
+                if (!Array.isArray(person.memories)) { person.memories = []; changed = true; }
+                if (!Number.isFinite(Number(person.affinity))) { person.affinity = 50; changed = true; }
+
+                const prevAff = normalizeAffinity(person.affinity, 50);
+                if (prevAff !== aff && (prevAff === 50 || aff <= 30 || aff >= 70)) {
+                    person.affinity = aff;
+                    changed = true;
+                }
+
+                if (avatar && !String(person.avatar || "").trim()) {
+                    person.avatar = avatar;
+                    changed = true;
+                }
+
+                changed = maybeUpdateTextField(person, "relationshipStatus", relationshipStatus, 80) || changed;
+                changed = maybeUpdateTextField(person, "thoughts", thoughts, 240) || changed;
+                changed = maybeUpdateTextField(person, "location", flags.met ? (location || "In current scene") : location, 120) || changed;
+                changed = maybeUpdateTextField(person, "age", age, 40) || changed;
+                changed = maybeUpdateTextField(person, "knownFamily", knownFamily, 120) || changed;
+                changed = maybeUpdateTextField(person, "familyRole", familyRole, 80) || changed;
+                changed = maybeUpdateTextField(person, "birthday", birthday, 48) || changed;
+                changed = maybeUpdateTextField(person, "likes", likes, 180) || changed;
+                changed = maybeUpdateTextField(person, "dislikes", dislikes, 180) || changed;
+
+                if (url && String(person.url || "").trim() !== url) {
+                    person.url = url;
+                    changed = true;
+                }
+
+                if (flags.met && person.met_physically !== true) {
+                    person.met_physically = true;
+                    changed = true;
+                }
+                if (flags.knownPast && person.known_from_past !== true) {
+                    person.known_from_past = true;
+                    changed = true;
+                }
+                if (person.met_physically === true && person.known_from_past === true) {
+                    person.known_from_past = false;
+                    changed = true;
+                }
+
+                if (tab !== hit.tab && (tabPriority[tab] || 0) >= (tabPriority[hit.tab] || 0)) {
+                    s.social[hit.tab].splice(hit.idx, 1);
+                    person.tab = tab;
+                    s.social[tab].push(person);
+                    changed = true;
+                }
+
+                if (changed) updated++;
+                continue;
+            }
+
+            const p = {
+                id: newId("person"),
+                name: nm,
+                affinity: aff,
+                thoughts,
+                avatar: avatar || "",
+                likes,
+                dislikes,
+                birthday,
+                location: flags.met ? (location || "In current scene") : location,
+                age,
+                knownFamily,
+                familyRole,
+                relationshipStatus,
+                url,
+                tab,
+                memories: [],
+                met_physically: flags.met,
+                known_from_past: flags.met ? false : flags.knownPast
+            };
+
+            s.social[tab].push(p);
+            added++;
+        }
+
+        if (added || updated) {
+            commitStateUpdate({ save: true, layout: false, emit: true });
+            renderSocial();
+            if (!silent) {
+                const parts = [];
+                if (added) parts.push(`${added} added`);
+                if (updated) parts.push(`${updated} updated`);
+                notify("success", `Social scan complete: ${parts.join(", ")}.`, "Social", "social");
+            }
+        } else if (!silent) {
+            notify("info", "No social updates found (all exist or ignored).", "Social", "social");
+        }
     } finally {
         autoScanInFlight = false;
     }
@@ -1405,6 +1558,8 @@ export function initSocial() {
         if (typeof mod.initAutoScanning === "function") mod.initAutoScanning();
     });
 }
+
+
 
 
 

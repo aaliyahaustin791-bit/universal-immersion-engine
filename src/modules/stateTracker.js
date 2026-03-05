@@ -1,4 +1,4 @@
-import { getSettings, commitStateUpdate } from "./core.js";
+﻿import { getSettings, commitStateUpdate } from "./core.js";
 import { getContext } from "/scripts/extensions.js";
 import { generateContent } from "./apiClient.js";
 import { notify } from "./notifications.js";
@@ -966,6 +966,7 @@ function stripCssBlocks(text) {
 export async function scanEverything(opts = {}) {
     const s = getSettings();
     const force = !!opts?.force;
+    const scanScope = String(opts?.scope || "all").trim().toLowerCase();
     if (s.enabled === false && !force) return;
     if (!force && s.generation?.scanAllEnabled === false) return;
     ensureState(s);
@@ -1045,7 +1046,8 @@ export async function scanEverything(opts = {}) {
         } catch (_) {}
     }
 
-    const chatSnippet = await getChatTranscriptText({ maxMessages: 40, maxChars: 12000 });
+    const scanMsgCount = Math.max(50, Number(s?.generation?.scanContextMessages || 80));
+    const chatSnippet = await getChatTranscriptText({ maxMessages: scanMsgCount, maxChars: 18000 });
 
     if (!chatSnippet) return;
 
@@ -1073,35 +1075,37 @@ export async function scanEverything(opts = {}) {
     }
 
     // --- PHASE 1: FREE REGEX CHECKS (Currency) ---
-    // We check the LAST message for instant currency updates (avoids AI cost/latency for simple gold)
-    const lastMsg = await getRecentChatSnippet(1);
-    const currencyGain = lastMsg.match(/(?:found|received|gained|picked up|looted|loot|earned|rewarded|added)\s+(\d+)\s*(?:gp|gold|credits|coins|silver)/i);
-    const currencyLoss = lastMsg.match(/(?:lost|paid|spent|gave|removed|pay|subtracted)\s+(\d+)\s*(?:gp|gold|credits|coins|silver)/i);
+    const scanInventoryScope = (scanScope === "all" || scanScope === "inventory");
+    if (scanInventoryScope) {
+        // We check the LAST message for instant currency updates (avoids AI cost/latency for simple gold)
+        const lastMsg = await getRecentChatSnippet(1);
+        const currencyGain = lastMsg.match(/(?:found|received|gained|picked up|looted|loot|earned|rewarded|added)\s+(\d+)\s*(?:gp|gold|credits|coins|silver)/i);
+        const currencyLoss = lastMsg.match(/(?:lost|paid|spent|gave|removed|pay|subtracted)\s+(\d+)\s*(?:gp|gold|credits|coins|silver)/i);
 
-    let currencyChanged = false;
-    if (currencyGain) {
-        const amt = parseInt(currencyGain[1]);
-        s.currency = Math.max(0, Number(s.currency || 0) + amt);
-        notify("success", `+ ${amt} ${s.currencySymbol || "G"}`, "Currency", "currency");
-        currencyChanged = true;
-    }
-    if (currencyLoss) {
-        const amt = parseInt(currencyLoss[1]);
-        s.currency = Math.max(0, Number(s.currency || 0) - amt);
-        notify("warning", `- ${amt} ${s.currencySymbol || "G"}`, "Currency", "currency");
-        currencyChanged = true;
-    }
-    if (currencyChanged) {
-        // Update currency item display if exists
-        const sym = String(s.currencySymbol || "G");
-        const curItem = s.inventory.items.find(it => String(it?.type || "").toLowerCase() === "currency" && String(it?.symbol || "") === sym);
-        if (curItem) curItem.qty = s.currency;
-        else if (currencyGain) { // Auto-create if gained
-             s.inventory.items.push({ kind: "item", name: `${sym} Currency`, type: "currency", symbol: sym, description: `Currency item for ${sym}.`, rarity: "common", qty: s.currency, mods: {}, statusEffects: [] });
+        let currencyChanged = false;
+        if (currencyGain) {
+            const amt = parseInt(currencyGain[1]);
+            s.currency = Math.max(0, Number(s.currency || 0) + amt);
+            notify("success", `+ ${amt} ${s.currencySymbol || "G"}`, "Currency", "currency");
+            currencyChanged = true;
         }
-        commitStateUpdate({ save: true, layout: false, emit: true });
+        if (currencyLoss) {
+            const amt = parseInt(currencyLoss[1]);
+            s.currency = Math.max(0, Number(s.currency || 0) - amt);
+            notify("warning", `- ${amt} ${s.currencySymbol || "G"}`, "Currency", "currency");
+            currencyChanged = true;
+        }
+        if (currencyChanged) {
+            // Update currency item display if exists
+            const sym = String(s.currencySymbol || "G");
+            const curItem = s.inventory.items.find(it => String(it?.type || "").toLowerCase() === "currency" && String(it?.symbol || "") === sym);
+            if (curItem) curItem.qty = s.currency;
+            else if (currencyGain) { // Auto-create if gained
+                 s.inventory.items.push({ kind: "item", name: `${sym} Currency`, type: "currency", symbol: sym, description: `Currency item for ${sym}.`, rarity: "common", qty: s.currency, mods: {}, statusEffects: [] });
+            }
+            commitStateUpdate({ save: true, layout: false, emit: true });
+        }
     }
-
     // --- PHASE 2: AI SCAN (Everything Else) ---
     // Only proceed if system checks are allowed, UNLESS forced by user
     if (!force && (s.enabled === false || s.generation?.allowSystemChecks === false)) return;
@@ -1208,6 +1212,23 @@ ${chatSnippet}
     try {
         const data = safeJsonParseObject(res);
         if (!data) return { ok: false, error: "invalid_json" };
+        if (scanScope && scanScope !== "all") {
+            const keepByScope = {
+                inventory: new Set(["inventory", "stats", "skills", "assets", "equipped", "life", "statusEffects"]),
+                social: new Set(["social"]),
+                battle: new Set(["battle"]),
+                party: new Set(["party"]),
+                phone: new Set(["messages", "phoneNumbers"]),
+                databank: new Set(["lore"]),
+                world: new Set(["world"]),
+            };
+            const keep = keepByScope[scanScope];
+            if (keep) {
+                for (const key of Object.keys(data)) {
+                    if (!keep.has(String(key || ""))) delete data[key];
+                }
+            }
+        }
 
         let needsSave = false;
 
@@ -1488,50 +1509,140 @@ ${chatSnippet}
         // 7. Social
         if (data.social && typeof data.social === "object") {
             ensureSocial(s);
+            const tabs = ["friends", "associates", "romance", "family", "rivals"];
+            const tabPriority = { friends: 1, associates: 2, family: 3, romance: 4, rivals: 5 };
             const deleted = new Set((s.socialMeta.deletedNames || []).map(x => normalizeSocialNameKey(x)).filter(Boolean));
-            const existingLower = new Set(["friends", "associates", "romance", "family", "rivals"].flatMap(k => (s.social[k] || []).map(p => normalizeSocialNameKey(p?.name || "")).filter(Boolean)));
             const userNames = [userName, charName].map(x => String(x || "").trim()).filter(Boolean);
             const addList = Array.isArray(data.social.add) ? data.social.add : [];
+
+            const existingMap = new Map();
+            for (const tabName of tabs) {
+                const arr = Array.isArray(s.social[tabName]) ? s.social[tabName] : [];
+                for (let i = 0; i < arr.length; i++) {
+                    const person = arr[i];
+                    const key = normalizeSocialNameKey(person?.name || "");
+                    if (!key || existingMap.has(key)) continue;
+                    existingMap.set(key, { tab: tabName, idx: i, person });
+                }
+            }
+
+            const firstNonEmpty = (...vals) => {
+                for (const v of vals) {
+                    const t = String(v || "").trim();
+                    if (t) return t;
+                }
+                return "";
+            };
+            const clean = (v, maxLen = 120) => String(v || "").trim().slice(0, maxLen);
+            const setIfNonEmpty = (obj, key, value) => {
+                const next = String(value || "").trim();
+                if (!next) return false;
+                if (String(obj?.[key] || "").trim() === next) return false;
+                obj[key] = next;
+                return true;
+            };
+
             let added = 0;
-            for (const v of addList.slice(0, 24)) {
-                const nm = String(v?.name || "").trim();
+            let updated = 0;
+
+            for (const v of addList.slice(0, 40)) {
+                const nm = clean(v?.name, 64);
                 if (!nm) continue;
+
                 const key = normalizeSocialNameKey(nm);
+                if (!key) continue;
                 if (shouldExcludeSocialName(nm, { deletedSet: deleted, userNames })) continue;
-                if (existingLower.has(key)) continue;
-                const tab = roleToTab(v?.role);
+
                 const aff = Math.max(0, Math.min(100, Math.round(Number(v?.affinity ?? 50))));
                 const presence = String(v?.presence || "").toLowerCase().trim();
                 const met = toBool(v?.met_physically) || presence === "present" || presence === "in_scene" || presence === "in room";
-                const knownPast = toBool(v?.known_from_past) || presence === "known_past";
-                const relationship = String(v?.relationship || v?.role || "").trim().slice(0, 80);
-                const familyRole = String(v?.familyRole || v?.family_role || "").trim().slice(0, 80);
-                s.social[tab].push({
+                const knownPast = !met && (toBool(v?.known_from_past) || presence === "known_past");
+
+                const relationship = clean(firstNonEmpty(v?.relationshipStatus, v?.relationship, v?.status, v?.role), 80);
+                const familyRole = clean(firstNonEmpty(v?.familyRole, v?.family_role), 80);
+                const thoughts = clean(firstNonEmpty(v?.thoughts, v?.notes, v?.summary, v?.description), 240);
+                const location = clean(v?.location, 120);
+                const age = clean(v?.age, 40);
+                const knownFamily = clean(firstNonEmpty(v?.knownFamily, v?.known_family, v?.family), 120);
+                const birthday = clean(v?.birthday, 48);
+                const likes = clean(v?.likes, 180);
+                const dislikes = clean(v?.dislikes, 180);
+                const urlRaw = clean(v?.url, 240);
+                const url = !urlRaw ? "" : (/^https?:\/\//i.test(urlRaw) ? urlRaw : `https://${urlRaw}`);
+
+                let tab = roleToTab(firstNonEmpty(v?.role, relationship, familyRole));
+                if (tab !== "family" && tab !== "romance" && aff <= 20) tab = "rivals";
+
+                const hit = existingMap.get(key);
+                if (hit && hit.person) {
+                    const person = hit.person;
+                    let changed = false;
+
+                    if (!person.id) { person.id = `person_${Date.now().toString(16)}_${Math.floor(Math.random() * 1e9).toString(16)}`; changed = true; }
+                    if (!Array.isArray(person.memories)) { person.memories = []; changed = true; }
+
+                    const prevAff = Math.max(0, Math.min(100, Math.round(Number(person?.affinity ?? 50))));
+                    if (prevAff !== aff && (prevAff === 50 || aff <= 30 || aff >= 70)) {
+                        person.affinity = aff;
+                        changed = true;
+                    }
+
+                    changed = setIfNonEmpty(person, "relationshipStatus", relationship) || changed;
+                    changed = setIfNonEmpty(person, "familyRole", familyRole) || changed;
+                    changed = setIfNonEmpty(person, "thoughts", thoughts) || changed;
+                    changed = setIfNonEmpty(person, "location", met ? (location || "In current scene") : location) || changed;
+                    changed = setIfNonEmpty(person, "age", age) || changed;
+                    changed = setIfNonEmpty(person, "knownFamily", knownFamily) || changed;
+                    changed = setIfNonEmpty(person, "birthday", birthday) || changed;
+                    changed = setIfNonEmpty(person, "likes", likes) || changed;
+                    changed = setIfNonEmpty(person, "dislikes", dislikes) || changed;
+                    changed = setIfNonEmpty(person, "url", url) || changed;
+
+                    if (met && person.met_physically !== true) { person.met_physically = true; changed = true; }
+                    if (knownPast && person.known_from_past !== true) { person.known_from_past = true; changed = true; }
+                    if (person.met_physically === true && person.known_from_past === true) { person.known_from_past = false; changed = true; }
+
+                    if (tab !== hit.tab && (tabPriority[tab] || 0) >= (tabPriority[hit.tab] || 0)) {
+                        const arrFrom = Array.isArray(s.social[hit.tab]) ? s.social[hit.tab] : [];
+                        const idx = arrFrom.indexOf(person);
+                        if (idx >= 0) arrFrom.splice(idx, 1);
+                        person.tab = tab;
+                        s.social[tab].push(person);
+                        existingMap.set(key, { tab, idx: s.social[tab].length - 1, person });
+                        changed = true;
+                    }
+
+                    if (changed) updated++;
+                    continue;
+                }
+
+                const person = {
                     id: `person_${Date.now().toString(16)}_${Math.floor(Math.random() * 1e9).toString(16)}`,
                     name: nm,
                     affinity: aff,
-                    thoughts: "",
+                    thoughts,
                     avatar: "",
-                    likes: "",
-                    dislikes: "",
-                    birthday: "",
-                    location: met ? "In current scene" : "",
-                    age: "",
-                    knownFamily: "",
+                    likes,
+                    dislikes,
+                    birthday,
+                    location: met ? (location || "In current scene") : location,
+                    age,
+                    knownFamily,
                     familyRole,
                     relationshipStatus: relationship,
-                    url: "",
+                    url,
                     tab,
                     memories: [],
                     met_physically: met,
                     known_from_past: knownPast
-                });
-                existingLower.add(key);
+                };
+                s.social[tab].push(person);
+                existingMap.set(key, { tab, idx: s.social[tab].length - 1, person });
                 added++;
             }
-            if (added) needsSave = true;
-        }
 
+            if (added || updated) needsSave = true;
+        }
         // 7.5 Phone Numbers
         if (Array.isArray(data.phoneNumbers)) {
             if (!s.phone || typeof s.phone !== "object") s.phone = { smsThreads: {}, numberBook: [] };
@@ -2070,6 +2181,9 @@ export async function initAutoScanning() {
         try { initDomAutoScanningFallback(); } catch (_) {}
     } catch (_) {}
 }
+
+
+
 
 
 

@@ -1,4 +1,4 @@
-
+﻿
 import {
     getSettings,
     saveSettings,
@@ -42,7 +42,7 @@ export const MEDALLIONS = {
     },
     "medallion_fire": {
         id: "medallion_fire",
-        name: "The Warlord’s Brand",
+        name: "The Warlordâ€™s Brand",
         type: "medallion",
         desc: "Best for: High Damage, Intimidation, High Risk.\n[Rank: Rebirth Artifact]\n[Status Effect: Burning Soul]\n- Cauterize: Wounds burn, no bleed.\n- Glass Cannon: Massive damage, reckless defense.\n- Heat Haze: Passive ignition aura.",
         img: "https://user.uploads.dev/file/87ab6c663ec4bd5bffed62d8790bd6f0.png",
@@ -503,7 +503,7 @@ export async function scanLootAndStatus(force = false) {
 
     if (force) notify("info", "Scanning chat log...", "Inventory", "api");
     try {
-        await scanEverything({ force: !!force });
+        await scanEverything({ force: !!force, scope: "inventory" });
     } catch (e) {
         try { console.warn("Scan Error", e); } catch (_) {}
         if (force) notify("error", "Scan failed to process.", "Inventory", "error");
@@ -611,7 +611,7 @@ function applyLevelingProgress(s) {
       const ptsGain = 5 + Math.floor(Number(s.character.level) / 5);
       s.character.statPoints = (Number(s.character.statPoints) || 0) + ptsGain;
       leveled = true;
-      notify("success", `Level Up → Lv ${s.character.level} (+${ptsGain} Stat Points)`, "Progress", "levelUp");
+      notify("success", `Level Up â†’ Lv ${s.character.level} (+${ptsGain} Stat Points)`, "Progress", "levelUp");
       injectRpEvent(`[System: Level Up! Character reached Level ${s.character.level}. Gained ${ptsGain} Stat Points.]`);
     }
     if (leveled) {
@@ -1536,7 +1536,7 @@ export function initInventory() {
       const genImg = $("#uie-create-gen-img").is(":checked");
 
       const st = document.getElementById("uie-create-status");
-      if (st) st.textContent = "Creating…";
+      if (st) st.textContent = "Creatingâ€¦";
 
       const chat = await getChatTranscriptText({ maxMessages: 30, maxChars: 2600 });
 
@@ -1653,7 +1653,7 @@ export function initInventory() {
                             <textarea class="uie-stage-desc" placeholder="Description" style="background:rgba(0,0,0,0.2); border:1px solid rgba(255,255,255,0.1); color:#aaa; padding:6px; border-radius:6px; height:50px; resize:vertical;">${item.description || ""}</textarea>
                             <div style="display:flex; gap:6px;">
                                 <button class="uie-stage-save" data-uid="${uid}" style="flex:1; background:rgba(46, 204, 113, 0.2); border:1px solid rgba(46, 204, 113, 0.4); color:#2ecc71; border-radius:6px; cursor:pointer; font-weight:bold; padding:6px;">Save & Add</button>
-                                <button class="uie-stage-discard" data-uid="${uid}" style="width:30px; background:rgba(231, 76, 60, 0.2); border:1px solid rgba(231, 76, 60, 0.4); color:#e74c3c; border-radius:6px; cursor:pointer;">×</button>
+                                <button class="uie-stage-discard" data-uid="${uid}" style="width:30px; background:rgba(231, 76, 60, 0.2); border:1px solid rgba(231, 76, 60, 0.4); color:#e74c3c; border-radius:6px; cursor:pointer;">Ã—</button>
                             </div>
                         </div>
                     </div>
@@ -1681,7 +1681,7 @@ export function initInventory() {
         }
 
       } finally {
-        if (st && st.textContent === "Creating…") st.textContent = "";
+        if (st && st.textContent === "Creatingâ€¦") st.textContent = "";
       }
     });
 
@@ -2286,7 +2286,7 @@ export function updateVitals() {
     if (mobileMeta) mobileMeta.innerHTML = `Lv <input type="number" class="uie-inv-input" data-key="level" value="${Number(s.character.level || 1)}" style="width:50px; background:rgba(0,0,0,0.5); border:1px solid #555; color:#fff; border-radius:4px;">`;
   } else {
     if (nameEl) nameEl.textContent = String(s.character.name || "User");
-    if (metaEl) metaEl.textContent = `${String(s.character.className || "Adventurer")} · Lv ${Number(s.character.level || 1)}`;
+    if (metaEl) metaEl.textContent = `${String(s.character.className || "Adventurer")} Â· Lv ${Number(s.character.level || 1)}`;
     if (classLine) classLine.textContent = String(s.character.className || "Adventurer");
     if (mobileName) mobileName.textContent = String(s.character.name || "User");
     if (mobileMeta) mobileMeta.textContent = `Lv ${Number(s.character.level || 1)}`;
@@ -2341,3 +2341,4 @@ export function updateVitals() {
 
   notifyLowHpIfNeeded();
 }
+

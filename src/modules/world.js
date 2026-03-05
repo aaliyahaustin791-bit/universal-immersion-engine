@@ -1,4 +1,4 @@
-
+﻿
 import { getSettings, saveSettings, isMobileUI } from "./core.js";
 import { notify } from "./notifications.js";
 import { initBackgroundManager } from "./backgrounds.js";
@@ -1927,7 +1927,7 @@ export function initWorld() {
         const btn = $("#uie-world-update");
         btn.addClass("fa-spin");
         try {
-            await scanEverything({ force: true });
+            await scanEverything({ force: true, scope: "world" });
             render();
         } catch(e) {}
         finally { btn.removeClass("fa-spin"); }
@@ -2118,3 +2118,4 @@ export function initWorld() {
         $("#re-quick-modal").hide();
     });
 }
+

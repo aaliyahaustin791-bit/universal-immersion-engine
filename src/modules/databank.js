@@ -1,6 +1,6 @@
-import { getSettings, saveSettings, ensureChatStateLoaded } from "./core.js";
+﻿import { getSettings, saveSettings, ensureChatStateLoaded } from "./core.js";
 import { generateContent } from "./apiClient.js";
-import { getWorldState, scanEverything } from "./stateTracker.js";
+import { getWorldState } from "./stateTracker.js";
 import { getContext } from "/scripts/extensions.js";
 import { injectRpEvent } from "./features/rp_log.js";
 import { parseJsonLoose, normalizeDatabankArrayInPlace, toDatabankDisplayEntries, addDatabankEntryWithDedupe } from "./databankModel.js";
@@ -50,6 +50,70 @@ function getChatSnippet(max) {
     }
 }
 
+export async function scanDatabankFromChat(opts = {}) {
+    const maxMessages = Math.max(50, Number(opts?.maxMessages || 80));
+    const silent = opts?.silent === true;
+    const allow = getSettings()?.ai?.databankScan !== false;
+    if (!allow) {
+        if (!silent) {
+            try { window.toastr?.info?.("Databank scan is disabled in settings."); } catch (_) {}
+        }
+        return { ok: false, reason: "disabled" };
+    }
+
+    const rawLog = getChatSnippet(maxMessages);
+    if (!rawLog || rawLog.length < 50) {
+        if (!silent) {
+            try { window.toastr?.info?.("Not enough chat data to archive."); } catch (_) {}
+        }
+        return { ok: false, reason: "not_enough_chat" };
+    }
+
+    const prompt = `Task: Generate a detailed "Memory File" for the Databank based on this RP segment.
+Input:
+${rawLog.substring(0, 5000)}
+
+Instructions:
+1. Create a concise but descriptive title.
+2. Write a detailed summary (4-6 sentences) capturing key events, important decisions, new information about characters/locations, and any changes in relationships or quest status. Avoid vague phrasing. Be specific.
+
+Output JSON: { "title": "Specific Title", "summary": "Detailed summary..." }`;
+
+    try {
+        const res = await generateContent(prompt, "System Check");
+        const data = parseJsonLoose(res);
+        if (!data || typeof data !== "object") throw new Error("Bad JSON response");
+
+        const s = getSettings();
+        ensureDatabank(s);
+        const beforeLen = Array.isArray(s.databank) ? s.databank.length : 0;
+
+        const addOpts = { now: Date.now(), makeId: () => newId("db") };
+        addDatabankEntryWithDedupe(s.databank, { title: data.title || "Memory", summary: data.summary || "" }, addOpts);
+
+        const afterLen = Array.isArray(s.databank) ? s.databank.length : 0;
+        const added = Math.max(0, afterLen - beforeLen);
+
+        saveSettings();
+        try { render(); } catch (_) {}
+        try { renderState(); } catch (_) {}
+
+        if (!silent) {
+            if (added > 0) {
+                try { window.toastr?.success?.("Databank updated."); } catch (_) {}
+            } else {
+                try { window.toastr?.info?.("No new databank entry to add."); } catch (_) {}
+            }
+        }
+        return { ok: true, added };
+    } catch (e) {
+        if (!silent) {
+            try { window.toastr?.error?.("Databank scan failed (check console)."); } catch (_) {}
+        }
+        try { console.error(e); } catch (_) {}
+        return { ok: false, reason: "scan_failed", error: String(e?.message || e || "") };
+    }
+}
 function ensureDatabank(s) {
     if (!s.databank) s.databank = [];
     if (!Array.isArray(s.databank)) s.databank = [];
@@ -154,51 +218,60 @@ export function initDatabank() {
         renderState();
     });
 
-    // Archive Memory Scan
+    // Databank Scan (Memories tab)
     doc.off("click", "#uie-db-scan").on("click", "#uie-db-scan", async function() {
-        const allow = getSettings()?.ai?.databankScan !== false;
-        if (!allow) return;
         const btn = $(this);
-        btn.addClass("fa-spin");
-
-        const rawLog = getChatSnippet(60);
-
-        if(rawLog.length < 50) { alert("Not enough chat data to archive."); btn.removeClass("fa-spin"); return; }
-
-        const prompt = `Task: Generate a detailed "Memory File" for the Databank based on this RP segment.
-Input:
-${rawLog.substring(0, 4000)}
-
-Instructions:
-1. Create a concise but descriptive title.
-2. Write a detailed summary (4-6 sentences) capturing key events, important decisions, new information about characters/locations, and any changes in relationships or quest status. Avoid vague phrasing. Be specific.
-
-Output JSON: { "title": "Specific Title", "summary": "Detailed summary..." }`;
-
+        const icon = btn.find("i");
+        if (btn.data("busy") === "1") return;
+        btn.data("busy", "1");
+        btn.prop("disabled", true);
+        icon.addClass("fa-spin");
         try {
-            const res = await generateContent(prompt, "System Check");
-            const data = parseJsonLoose(res);
-            if (!data || typeof data !== "object") throw new Error("Bad JSON response");
-            const s = getSettings();
-            ensureDatabank(s);
-
-            const opts = { now: Date.now(), makeId: () => newId("db") };
-            addDatabankEntryWithDedupe(s.databank, { title: data.title || "Memory", summary: data.summary || "" }, opts);
-            saveSettings();
-            render();
-            if(window.toastr) toastr.success("Memory Archived");
-        } catch(e) { try { window.toastr?.error?.("Archive failed (check console)."); } catch (_) {} console.error(e); }
-        btn.removeClass("fa-spin");
+            await scanDatabankFromChat({ maxMessages: 80, silent: false });
+        } finally {
+            icon.removeClass("fa-spin");
+            btn.prop("disabled", false);
+            btn.data("busy", "0");
+        }
     });
 
+    // State tab refresh (Databank-only, no full UIE Scan All)
     doc.off("click", "#uie-db-state-scan").on("click", "#uie-db-state-scan", async function() {
-        const btn = $(this).find("i");
-        btn.addClass("fa-spin");
-        try { await scanEverything({ force: true }); } catch (_) {}
-        try { renderState(); } catch (_) {}
-        btn.removeClass("fa-spin");
+        const btn = $(this);
+        const icon = btn.find("i");
+        if (btn.data("busy") === "1") return;
+        btn.data("busy", "1");
+        btn.prop("disabled", true);
+        icon.addClass("fa-spin");
+        try {
+            await scanDatabankFromChat({ maxMessages: 80, silent: true });
+            try { renderState(); } catch (_) {}
+            try { render(); } catch (_) {}
+            try { window.toastr?.success?.("State refreshed."); } catch (_) {}
+        } finally {
+            icon.removeClass("fa-spin");
+            btn.prop("disabled", false);
+            btn.data("busy", "0");
+        }
     });
 
+    // Social tab quick scan button (adds/refreshes databank entries only)
+    doc.off("click", "#uie-db-social-scan").on("click", "#uie-db-social-scan", async function () {
+        const btn = $(this);
+        const icon = btn.find("i");
+        if (btn.data("busy") === "1") return;
+        btn.data("busy", "1");
+        btn.prop("disabled", true);
+        icon.addClass("fa-spin");
+        try {
+            await scanDatabankFromChat({ maxMessages: 80, silent: false });
+            try { renderSocialProfiles(); } catch (_) {}
+        } finally {
+            icon.removeClass("fa-spin");
+            btn.prop("disabled", false);
+            btn.data("busy", "0");
+        }
+    });
     // Delete Memory
     doc.off("click", ".db-delete").on("click", ".db-delete", function() {
         if(confirm("Delete this memory?")) {
@@ -399,7 +472,7 @@ function renderSocialMemoriesModal() {
     if (!person) return;
     const ctx = getContext ? getContext() : {};
     const user = String(ctx?.name1 || "User");
-    $("#uie-db-social-mem-sub").text(`${person.name} ↔ ${user}`);
+    $("#uie-db-social-mem-sub").text(`${person.name} â†” ${user}`);
 
     const list = $("#uie-db-social-mem-list").empty();
     const mems = Array.isArray(person.memories) ? person.memories.slice() : [];
@@ -465,8 +538,8 @@ Return ONLY valid JSON (no markdown, no extra keys):
 Rules:
 - 3 to 8 memories max. If none, return {"memories":[]}.
 - Each memory must be a durable fact that CHANGED something: trust, fear, loyalty, obligation, romance, rivalry, plans, secrets, injuries, promises, betrayals, gifts, major discoveries.
-- No trivial entries (no greetings, walking in, “they talked”, generic vibes).
-- Be specific and consequence-based. 1–2 sentences per memory.
+- No trivial entries (no greetings, walking in, â€œthey talkedâ€, generic vibes).
+- Be specific and consequence-based. 1â€“2 sentences per memory.
 - Tags are short (e.g., "promise", "betrayal", "injury", "secret", "favor", "trauma", "trust").`;
 
     try { window.toastr?.info?.("Scanning memories..."); } catch (_) {}
@@ -703,3 +776,4 @@ export function getFullHistoryContext() {
     if (!lines.length) return "";
     return "PAST EVENTS:\n" + lines.map(x => `- ${x}`).join("\n");
 }
+

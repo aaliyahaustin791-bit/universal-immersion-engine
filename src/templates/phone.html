@@ -399,7 +399,7 @@
             <span class="uie-phone-clock-time-lg">12:00</span>
             <span class="uie-phone-clock-ampm-lg" style="font-size:0.28em; font-weight:800; opacity:0.9; letter-spacing:0.12em;">PM</span>
         </h1>
-        <div class="uie-phone-date" style="font-size:0.95em; color:#ddd; margin-top:6px; margin-bottom:18px;">—</div>
+        <div class="uie-phone-date" style="font-size:0.95em; color:#ddd; margin-top:6px; margin-bottom:18px;">â€”</div>
         <div style="font-size:0.9em; color:#ccc; margin-bottom:20px;">Swipe to Unlock</div>
         <input type="password" id="uie-phone-pin" class="p-pin-input" placeholder="PIN" maxlength="4" style="display:none; padding:10px; border-radius:8px; border:none; margin-bottom:10px;">
         <button id="uie-phone-unlock-btn" style="margin-top:20px; padding:12px 30px; background:rgba(255,255,255,0.2); border:none; color:white; border-radius:25px; font-weight:bold; cursor:pointer; pointer-events:auto;">Unlock</button>
@@ -475,7 +475,7 @@
                     <div style="width:40px; height:40px; border-radius:14px; background:rgba(255,255,255,0.06); display:grid; place-items:center; border:1px solid rgba(255,255,255,0.10);"><i class="fa-solid fa-cube" style="color:#fff;"></i></div>
                     <div style="flex:1; min-width:0;">
                         <div style="font-weight:900; letter-spacing:0.4px;">App Builder</div>
-                        <div style="opacity:0.7; font-size:12px;">Generate → Preview → Install</div>
+                        <div style="opacity:0.7; font-size:12px;">Generate â†’ Preview â†’ Install</div>
                     </div>
                 </div>
                 <div style="display:flex; flex-direction:column; gap:8px; margin-top:10px;">
@@ -525,7 +525,7 @@
                 <button id="dial-recents-clear" title="Clear call log" data-i18n-title="phone.dial.clear_log" data-i18n="phone.dial.clear" style="margin-left:auto; height:34px; padding:0 10px; border-radius:12px; border:1px solid rgba(255,255,255,0.12); background:rgba(0,0,0,0.18); color:#fff; font-weight:900; cursor:pointer;">Clear</button>
             </div>
             <div id="dial-recents" style="max-height:160px; overflow:auto; border-radius:16px; border:1px solid rgba(255,255,255,0.12); background:rgba(0,0,0,0.18); padding:10px;"></div>
-            <div id="dial-display" style="height:44px; border-radius:14px; border:1px solid rgba(255,255,255,0.12); background:rgba(0,0,0,0.22); color:#fff; display:flex; align-items:center; justify-content:center; font-weight:900; letter-spacing:1px; font-size:1.05em;">—</div>
+            <div id="dial-display" style="height:44px; border-radius:14px; border:1px solid rgba(255,255,255,0.12); background:rgba(0,0,0,0.22); color:#fff; display:flex; align-items:center; justify-content:center; font-weight:900; letter-spacing:1px; font-size:1.05em;">â€”</div>
             <div id="dial-pad" style="display:grid; grid-template-columns: repeat(3, 1fr); gap:10px;">
                 <button class="dial-btn" data-digit="1" style="height:56px; border-radius:16px; border:1px solid rgba(255,255,255,0.12); background:rgba(0,0,0,0.18); color:#fff; font-weight:900;">1</button>
                 <button class="dial-btn" data-digit="2" style="height:56px; border-radius:16px; border:1px solid rgba(255,255,255,0.12); background:rgba(0,0,0,0.18); color:#fff; font-weight:900;">2</button>
@@ -590,7 +590,7 @@
                 #uie-phone-window #uie-app-books-view .book-row:hover { background:rgba(255,255,255,0.08); }
                 #uie-phone-window #uie-app-books-view #books-reader { border:1px solid rgba(255,255,255,0.12); border-radius:16px; overflow:hidden; }
                 #uie-phone-window #uie-app-books-view #books-reader-head { padding:10px; background:rgba(0,0,0,0.35); border-bottom:1px solid rgba(255,255,255,0.10); display:flex; gap:10px; align-items:center; color:#fff; }
-                #uie-phone-window #uie-app-books-view #books-reader-close { margin-left:auto; height:32px; padding:0 10px; border-radius:12px; border:1px solid rgba(255,255,255,0.12); background:rgba(0,0,0,0.25); color:#fff; font-weight:900; cursor:pointer; }
+                #uie-phone-window #uie-app-books-view #books-reader-close { margin-left:auto; height:32px; min-width:34px; padding:0 10px; border-radius:12px; border:1px solid rgba(255,255,255,0.12); background:rgba(0,0,0,0.25); color:#fff; font-weight:900; cursor:pointer; display:flex; align-items:center; justify-content:center; line-height:1; font-size:18px; }
                 #uie-phone-window #uie-app-books-view #books-reader-body { padding:14px; background:#f7f2e8; color:#2c1e10; font-family: Iowan Old Style, Palatino Linotype, Book Antiqua, Palatino, Georgia, serif; line-height:1.6; }
             </style>
             <div class="books-tabs">
@@ -797,7 +797,7 @@
                 <div id="books-list" style="display:flex; flex-direction:column; gap:10px; margin-top:12px;"></div>
                 <div id="books-reader" style="display:none; margin-top:12px;">
                     <div id="books-reader-head">
-                        <button id="books-reader-close" title="Close" style="margin-left:auto;">×</button>
+                        <button id="books-reader-close" title="Close" style="margin-left:auto; display:flex; align-items:center; justify-content:center; line-height:1;">X</button>
                     </div>
                     <div id="books-reader-body"></div>
                 </div>
@@ -811,19 +811,19 @@
             <div id="calc-display" style="height:60px; border-radius:16px; border:1px solid rgba(255,255,255,0.12); background:rgba(0,0,0,0.25); padding:12px; display:flex; align-items:flex-end; justify-content:flex-end; font-weight:900; font-size:22px; overflow:hidden; white-space:nowrap;">0</div>
             <div style="display:grid; grid-template-columns: repeat(4, 1fr); gap:10px;">
                 <button class="calc-btn" data-act="clear" style="height:52px; border-radius:16px; border:1px solid rgba(255,255,255,0.12); background:rgba(255,255,255,0.06); color:#fff; font-weight:900;">AC</button>
-                <button class="calc-btn" data-act="back" style="height:52px; border-radius:16px; border:1px solid rgba(255,255,255,0.12); background:rgba(255,255,255,0.06); color:#fff; font-weight:900;">⌫</button>
+                <button class="calc-btn" data-act="back" style="height:52px; border-radius:16px; border:1px solid rgba(255,255,255,0.12); background:rgba(255,255,255,0.06); color:#fff; font-weight:900;">âŒ«</button>
                 <button class="calc-btn" data-val="%" style="height:52px; border-radius:16px; border:1px solid rgba(255,255,255,0.12); background:rgba(255,255,255,0.06); color:#fff; font-weight:900;">%</button>
-                <button class="calc-btn" data-val="/" style="height:52px; border-radius:16px; border:none; background:#cba35c; color:#000; font-weight:900;">÷</button>
+                <button class="calc-btn" data-val="/" style="height:52px; border-radius:16px; border:none; background:#cba35c; color:#000; font-weight:900;">Ã·</button>
 
                 <button class="calc-btn" data-val="7" style="height:52px; border-radius:16px; border:1px solid rgba(255,255,255,0.12); background:rgba(0,0,0,0.18); color:#fff; font-weight:900;">7</button>
                 <button class="calc-btn" data-val="8" style="height:52px; border-radius:16px; border:1px solid rgba(255,255,255,0.12); background:rgba(0,0,0,0.18); color:#fff; font-weight:900;">8</button>
                 <button class="calc-btn" data-val="9" style="height:52px; border-radius:16px; border:1px solid rgba(255,255,255,0.12); background:rgba(0,0,0,0.18); color:#fff; font-weight:900;">9</button>
-                <button class="calc-btn" data-val="*" style="height:52px; border-radius:16px; border:none; background:#cba35c; color:#000; font-weight:900;">×</button>
+                <button class="calc-btn" data-val="*" style="height:52px; border-radius:16px; border:none; background:#cba35c; color:#000; font-weight:900;">Ã—</button>
 
                 <button class="calc-btn" data-val="4" style="height:52px; border-radius:16px; border:1px solid rgba(255,255,255,0.12); background:rgba(0,0,0,0.18); color:#fff; font-weight:900;">4</button>
                 <button class="calc-btn" data-val="5" style="height:52px; border-radius:16px; border:1px solid rgba(255,255,255,0.12); background:rgba(0,0,0,0.18); color:#fff; font-weight:900;">5</button>
                 <button class="calc-btn" data-val="6" style="height:52px; border-radius:16px; border:1px solid rgba(255,255,255,0.12); background:rgba(0,0,0,0.18); color:#fff; font-weight:900;">6</button>
-                <button class="calc-btn" data-val="-" style="height:52px; border-radius:16px; border:none; background:#cba35c; color:#000; font-weight:900;">−</button>
+                <button class="calc-btn" data-val="-" style="height:52px; border-radius:16px; border:none; background:#cba35c; color:#000; font-weight:900;">âˆ’</button>
 
                 <button class="calc-btn" data-val="1" style="height:52px; border-radius:16px; border:1px solid rgba(255,255,255,0.12); background:rgba(0,0,0,0.18); color:#fff; font-weight:900;">1</button>
                 <button class="calc-btn" data-val="2" style="height:52px; border-radius:16px; border:1px solid rgba(255,255,255,0.12); background:rgba(0,0,0,0.18); color:#fff; font-weight:900;">2</button>
@@ -1023,3 +1023,5 @@
         <div class="uie-phone-sticker-tile" style="aspect-ratio:1; cursor:pointer;"><img style="width:100%; height:100%; object-fit:contain;"></div>
     </template>
 </div>
+
+
