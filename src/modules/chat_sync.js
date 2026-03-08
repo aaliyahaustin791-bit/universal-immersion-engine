@@ -159,17 +159,30 @@ function cloneMessage(stMsg, reChatLog) {
 
     // Swipe
     const btnSwipe = createCtrlBtn("fa-rotate", "Swipe", () => {
-        const realSwipe = stMsg.querySelector(".mes_regenerate"); // check selector
-        // ST usually puts swipe in a different place or it's part of the last message controls
-        // If it's a specific message, we might need to trigger the generation function directly.
-        // For now, let's try finding the swipe button in the real message
-        const swipe = stMsg.querySelector(".swipe_left") || stMsg.querySelector(".swipe_right");
-        if (swipe) swipe.click();
-        else {
-             // Fallback: Trigger regenerate if it's the last message
-             const regen = document.getElementById("regenerate");
-             if (regen) regen.click();
-        }
+        const clickFirst = (root, selectors) => {
+            for (const sel of selectors) {
+                try {
+                    const el = root?.querySelector?.(sel);
+                    if (el) {
+                        el.click();
+                        return true;
+                    }
+                } catch (_) {}
+            }
+            return false;
+        };
+
+        // Prefer controls that request a fresh generation.
+        if (clickFirst(stMsg, [".mes_regenerate", ".swipe_right"])) return;
+
+        // Global fallback for varying ST layouts.
+        clickFirst(document, [
+            "#regenerate_but",
+            "#regenerate_button",
+            "#regenerate",
+            "#regen",
+            "[data-testid='regenerate']"
+        ]);
     });
 
     // Native TTS
