@@ -256,58 +256,6 @@ function syncToMainChat(actionDescription) {
 }
 
 export function initPhone() {
-    export function initPhone() {
-    // --- START OF FIX: Reset phone per chat ---
-    const s = getSettings();
-    if (!s.phone) s.phone = {};
-
-    // Get current chat ID from SillyTavern context
-    let currentChatId = null;
-    try {
-        const ctx = getContext?.();
-        currentChatId = String(ctx?.chatId || ctx?.sessionId || '');
-    } catch (_) {}
-
-    const lastChatId = s.phone._lastChatId;
-
-    // If chat changed (or first run), reset chat-specific data
-    if (currentChatId && currentChatId !== lastChatId) {
-        // Clear everything that belongs to a specific chat
-        s.phone.smsThreads = {};
-        s.phone.callLog = [];
-        s.phone.callHistory = [];
-        s.phone.arrivals = [];
-        s.phone.browser = { pages: {}, history: [], index: -1 };
-        s.phone.numberBook = [];
-        // Also clear social relationships if you want a fresh start per chat
-        if (s.social) {
-            s.social = {
-                friends: [],
-                associates: [],
-                romance: [],
-                family: [],
-                rivals: [],
-                stats: {}
-            };
-        }
-        // Reset active contact and call state
-        activeContact = null;
-        callChatContext = "";
-        if (callTimerInt) clearInterval(callTimerInt);
-        callTimerInt = null;
-
-        // Store the new chat ID
-        s.phone._lastChatId = currentChatId;
-        saveSettings();
-    } else if (!s.phone._lastChatId && currentChatId) {
-        // First time ever – just record the chat ID
-        s.phone._lastChatId = currentChatId;
-        saveSettings();
-    }
-    // --- END OF FIX ---
-
-    const $win = $("#uie-phone-window");
-    // ... rest of the existing code ...
     const $win = $("#uie-phone-window");
     if (!$win.length) return;
     $win.off("click.phone change.phone input.phone keypress.phone");
