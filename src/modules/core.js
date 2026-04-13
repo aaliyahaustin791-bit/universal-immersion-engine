@@ -710,6 +710,7 @@ const SESSION_KEYS = [
     "inventory", "character", "currency", "currencySymbol", "currencyRate", 
     "calendar", "map", "social", "diary", "databank", "activities",
     "xp", "hp", "mp", "ap", "maxHp", "maxMp", "maxAp", "maxXp", "life", "image", "worldState"
+    "phone"
 ];
 
 function getChatScopedSocialDeletedNames(meta) {
@@ -805,6 +806,8 @@ function loadChatState(chatId) {
         try { import("./features/items.js").then(m => m.render?.()); } catch (_) {}
         try { import("./features/skills.js").then(m => m.init?.()); } catch (_) {}
         try { import("./features/assets.js").then(m => m.init?.()); } catch (_) {}
+        try { import("./phone.js").then(m => m.initPhone?.()); } catch (_) {}  // ← ADD THIS
+        try { import("./databank.js").then(m => m.initDatabank?.()); } catch (_) {}  // ← ADD THIS
     }, 50);
 }
 
