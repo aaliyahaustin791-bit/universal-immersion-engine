@@ -720,7 +720,7 @@ const SESSION_KEYS = [
     "inventory", "character", "currency", "currencySymbol", "currencyRate", 
     "calendar", "map", "social", "diary", "databank", "activities",
     "xp", "hp", "mp", "ap", "maxHp", "maxMp", "maxAp", "maxXp", "life", "image", "worldState",
-    "phone"  // ← FIX: Added phone to session keys so contacts/messages reset per chat
+    "phone"  // FIX: Added phone to session keys so contacts/messages reset per chat
 ];
 
 function getChatScopedSocialDeletedNames(meta) {
@@ -802,12 +802,17 @@ function loadChatState(chatId) {
     // Persist chat state to disk (save current chat storage + session state)
     try { saveSettings(); } catch (_) {}
     
-    // Notify system
+    // Notify system and dispatch chat change event
     setTimeout(() => {
         try { window.UIE_refreshStateSaves?.(); } catch (_) {}
         try {
             const event = new CustomEvent("uie:state_updated", { detail: { chatLoad: true } });
             window.dispatchEvent(event);
+        } catch (_) {}
+        // FIX: Dispatch chat change event for modules to listen to
+        try {
+            const chatEvent = new CustomEvent("uie:chatChanged", { detail: { chatId, previousChatId: lastChatId } });
+            window.dispatchEvent(chatEvent);
         } catch (_) {}
         try { updateLayout(); } catch (_) {}
         
@@ -816,9 +821,6 @@ function loadChatState(chatId) {
         try { import("./features/items.js").then(m => m.render?.()); } catch (_) {}
         try { import("./features/skills.js").then(m => m.init?.()); } catch (_) {}
         try { import("./features/assets.js").then(m => m.init?.()); } catch (_) {}
-        // FIX: Refresh phone and databank on chat change
-        try { import("./phone.js").then(m => m.initPhone?.()); } catch (_) {}
-        try { import("./databank.js").then(m => m.initDatabank?.()); } catch (_) {}
     }, 50);
 }
 
