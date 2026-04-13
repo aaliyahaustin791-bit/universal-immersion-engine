@@ -156,7 +156,12 @@ function hasUserData(s) {
         const hasSocial = s.social && typeof s.social === "object" && Object.values(s.social).some(v => Array.isArray(v) && v.length);
         const hasDiary = s.diary && typeof s.diary === "object" && Object.keys(s.diary).length > 0;
         const hasDatabank = s.databank && typeof s.databank === "object" && Object.keys(s.databank).length > 0;
-        return invItems > 0 || hasSavedStates || hasCalendar || hasMap || hasSocial || hasDiary || hasDatabank;
+        const hasPhone = s.phone && typeof s.phone === "object" && (
+            (Array.isArray(s.phone.numberBook) && s.phone.numberBook.length > 0) ||
+            (s.phone.smsThreads && Object.keys(s.phone.smsThreads).length > 0) ||
+            (Array.isArray(s.phone.callLog) && s.phone.callLog.length > 0)
+        );
+        return invItems > 0 || hasSavedStates || hasCalendar || hasMap || hasSocial || hasDiary || hasDatabank || hasPhone;
     } catch (_) {
         return false;
     }
@@ -205,14 +210,19 @@ function looksEmptySettings(s) {
         const hasSocial = s.social && typeof s.social === "object" && Object.values(s.social).some(v => Array.isArray(v) && v.length);
         const hasDiary = s.diary && typeof s.diary === "object" && Object.keys(s.diary).length > 0;
         const hasDatabank = s.databank && typeof s.databank === "object" && Object.keys(s.databank).length > 0;
+        const hasPhone = s.phone && typeof s.phone === "object" && (
+            (Array.isArray(s.phone.numberBook) && s.phone.numberBook.length > 0) ||
+            (s.phone.smsThreads && Object.keys(s.phone.smsThreads).length > 0) ||
+            (Array.isArray(s.phone.callLog) && s.phone.callLog.length > 0)
+        );
         if (invItems > 0) return false;
-        if (hasSavedStates || hasCalendar || hasMap || hasSocial || hasDiary || hasDatabank) return false;
+        if (hasSavedStates || hasCalendar || hasMap || hasSocial || hasDiary || hasDatabank || hasPhone) return false;
 
         const keep = ["inventory", "image", "windows", "ui", "currencySymbol", "currencyRate"].filter(Boolean);
         const meaningful = keys.filter(k => !keep.includes(k));
         return meaningful.length === 0;
     } catch (_) {
-        return false;
+        return true;
     }
 }
 
@@ -709,8 +719,8 @@ let lastChatId = null;
 const SESSION_KEYS = [
     "inventory", "character", "currency", "currencySymbol", "currencyRate", 
     "calendar", "map", "social", "diary", "databank", "activities",
-    "xp", "hp", "mp", "ap", "maxHp", "maxMp", "maxAp", "maxXp", "life", "image", "worldState"
-    "phone"
+    "xp", "hp", "mp", "ap", "maxHp", "maxMp", "maxAp", "maxXp", "life", "image", "worldState",
+    "phone"  // ← FIX: Added phone to session keys so contacts/messages reset per chat
 ];
 
 function getChatScopedSocialDeletedNames(meta) {
@@ -806,8 +816,9 @@ function loadChatState(chatId) {
         try { import("./features/items.js").then(m => m.render?.()); } catch (_) {}
         try { import("./features/skills.js").then(m => m.init?.()); } catch (_) {}
         try { import("./features/assets.js").then(m => m.init?.()); } catch (_) {}
-        try { import("./phone.js").then(m => m.initPhone?.()); } catch (_) {}  // ← ADD THIS
-        try { import("./databank.js").then(m => m.initDatabank?.()); } catch (_) {}  // ← ADD THIS
+        // FIX: Refresh phone and databank on chat change
+        try { import("./phone.js").then(m => m.initPhone?.()); } catch (_) {}
+        try { import("./databank.js").then(m => m.initDatabank?.()); } catch (_) {}
     }, 50);
 }
 
