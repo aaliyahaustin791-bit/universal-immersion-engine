@@ -1222,26 +1222,6 @@ ${chat}`.slice(0, 6000);
 
     // ... [rest of the phone event handlers continue as in original] ...
 
-    // Standard bindings, call logic, browser logic, etc. continue here...
-    // [The rest of the file continues unchanged from the original]
-
-    loadPhoneVisuals();
-    startArrivalWatcher();
-
-    // FIX: Listen for chat changes to reset phone UI
-    $(window).off("uie:chatChanged.uiePhone").on("uie:chatChanged.uiePhone", function(e) {
-        console.log("[UIE Phone] Chat changed, resetting UI");
-        // Clear module-level state
-        activeContact = null;
-        dialBuf = "";
-        callChatContext = "";
-        
-        // Clear call timer if running
-        if (callTimerInt) {
-            clearInterval(callTimerInt);
-            callTimerInt = null;
-        }
-        
         // Re-initialize phone visuals (loads new chat's phone data)
                 loadPhoneVisuals();
                 startArrivalWatcher();
