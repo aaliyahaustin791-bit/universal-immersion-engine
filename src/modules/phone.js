@@ -1243,7 +1243,50 @@ ${chat}`.slice(0, 6000);
         }
         
         // Re-initialize phone visuals (loads new chat's phone data)
-        loadPhoneVisuals();
+            loadPhoneVisuals();
+            startArrivalWatcher();
+
+    // FIX: Listen for chat changes to reset phone UI
+    $(window).off("uie:chatChanged.uiePhone").on("uie:chatChanged.uiePhone", function(e) {
+        try {
+            console.log("[UIE Phone] Chat changed, resetting UI");
+            
+            // Clear module-level state
+            activeContact = null;
+            dialBuf = "";
+            callChatContext = "";
+            
+            // Clear call timer if running
+            if (callTimerInt) {
+                clearInterval(callTimerInt);
+                callTimerInt = null;
+            }
+            
+            // Re-initialize phone visuals (loads new chat's phone data)
+            try { loadPhoneVisuals(); } catch(err) { console.error("[UIE Phone] loadPhoneVisuals error:", err); }
+            
+            // Force re-render of UI components if phone is visible
+            const $phone = $("#uie-phone-window");
+            if ($phone.is(":visible")) {
+                // Hide lockscreen if showing (new chat = no PIN needed)
+                try { 
+                    $("#uie-phone-lockscreen").hide();
+                    $("#uie-lock-msg").text("");
+                    $("#uie-phone-pin").val("");
+                } catch(_) {}
+                
+                // Re-render components
+                try { renderContacts(); } catch(_) {}
+                try { renderMessages(); } catch(_) {}
+                try { renderDialRecents(); } catch(_) {}
+                
+                // Go back to home screen
+                try { goHome(); } catch(_) {}
+            }
+        } catch(err) {
+            console.error("[UIE Phone] Reset error:", err);
+        }
+    });
         
         // Force re-render of UI components if phone is visible
         if ($("#uie-phone-window").is(":visible")) {
