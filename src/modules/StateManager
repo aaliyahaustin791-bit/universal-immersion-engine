@@ -1,0 +1,34 @@
+import { getContext } from "../../../../extensions.js";
+
+const EXT_ID = "universal-immersion-engine";
+
+// Gets data for the CURRENTLY OPEN chat
+export function getChatData() {
+    const context = getContext();
+    // If no chat is open, return empty defaults
+    if (!context.chatId || !context.chat_metadata) {
+        return { inventory: [], phone: {}, databank: {} };
+    }
+    
+    // Initialize if it doesn't exist for this specific chat
+    if (!context.chat_metadata[EXT_ID]) {
+        context.chat_metadata[EXT_ID] = {
+            inventory: [],
+            phone: { messages: [], activeContacts: [] },
+            databank: {}
+        };
+    }
+    
+    return context.chat_metadata[EXT_ID];
+}
+
+// Saves data to the current chat
+export function saveChatData(data) {
+    const context = getContext();
+    if (!context.chatId || !context.chat_metadata) return;
+    
+    context.chat_metadata[EXT_ID] = data;
+    // SillyTavern auto-saves metadata when a new message is sent, 
+    // but you can force a save if you update inventory mid-turn:
+    // context.saveChat();
+}
