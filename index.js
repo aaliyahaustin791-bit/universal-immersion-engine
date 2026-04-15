@@ -249,8 +249,6 @@ jQuery(async () => {
         markInitError("critical", e);
     }
 });
-    import { eventSource, event_types } from "../../../../script.js";
-    import { getChatData } from "./modules/stateManager.js";
 
 // Listen for when a chat is opened or switched
 eventSource.on(event_types.CHAT_CHANGED, () => {
