@@ -249,4 +249,19 @@ jQuery(async () => {
         markInitError("critical", e);
     }
 });
+    import { eventSource, event_types } from "../../../../script.js";
+    import { getChatData } from "./modules/stateManager.js";
+
+// Listen for when a chat is opened or switched
+eventSource.on(event_types.CHAT_CHANGED, () => {
+    const localData = getChatData();
+    
+    // Call your existing UI refresh functions here
+    // but pass them the LOCAL data instead of global settings
+    UIE.Phone.loadData(localData.phone);
+    UIE.Inventory.loadData(localData.inventory);
+    UIE.Databank.loadData(localData.databank);
+    
+    console.log("[UIE] Loaded chat-specific data");
+});
 
