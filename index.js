@@ -1,4 +1,7 @@
-﻿const EXT_ID = "universal-immersion-engine";
+import { eventSource, event_types } from "../../../../script.js";
+import { migrateLegacyData, getChatData } from "./src/modules/StateManager.js";
+
+const EXT_ID = "universal-immersion-engine";
 const basePathFallback = `scripts/extensions/third-party/${EXT_ID}`;
 const baseUrl = (() => {
     try {
@@ -263,3 +266,24 @@ eventSource.on(event_types.CHAT_CHANGED, () => {
     console.log("[UIE] Loaded chat-specific data");
 });
 
+eventSource.on(event_types.CHAT_CHANGED, () => {
+    // 1. Migrate old data if needed (runs once)
+    migrateLegacyData();
+    
+    // 2. Grab the data for the newly opened chat
+    const localData = getChatData();
+    
+    // 3. Update the UI modules 
+    // (Adjust these to match how your specific modules are loaded globally)
+    if (window.UIE) {
+        if (window.UIE.Phone && typeof window.UIE.Phone.loadData === 'function') {
+             window.UIE.Phone.loadData(localData.phone);
+        }
+        if (window.UIE.Inventory && typeof window.UIE.Inventory.loadData === 'function') {
+             window.UIE.Inventory.loadData(localData.inventory);
+        }
+        if (window.UIE.Databank && typeof window.UIE.Databank.loadData === 'function') {
+             window.UIE.Databank.loadData(localData.databank);
+        }
+    }
+});
