@@ -1,6 +1,3 @@
-import { eventSource, event_types } from "../../../../script.js";
-import { migrateLegacyData, getChatData } from "./src/modules/StateManager.js";
-
 const EXT_ID = "universal-immersion-engine";
 const basePathFallback = `scripts/extensions/third-party/${EXT_ID}`;
 const baseUrl = (() => {
@@ -10,6 +7,25 @@ const baseUrl = (() => {
     } catch (_) {
         const p = basePathFallback.startsWith("/") ? basePathFallback : `/${basePathFallback}`;
         return `${p}/`;
+    }
+    // --- NEW: Safe Dynamic Loading for Chat State ---
+    try {
+        const stScript = await import("../../../../script.js");
+        const stateManager = await import("./src/modules/StateManager.js");
+
+        stScript.eventSource.on(stScript.event_types.CHAT_CHANGED, () => {
+            stateManager.migrateLegacyData();
+            const localData = stateManager.getChatData();
+            
+            if (window.UIE) {
+                if (window.UIE.Phone?.loadData) window.UIE.Phone.loadData(localData.phone);
+                if (window.UIE.Inventory?.loadData) window.UIE.Inventory.loadData(localData.inventory);
+                if (window.UIE.Databank?.loadData) window.UIE.Databank.loadData(localData.databank);
+            }
+        });
+        console.log("[UIE] Chat state listener attached successfully.");
+    } catch (err) {
+        console.error("[UIE] Failed to load chat state modules:", err);
     }
 })();
 try {
