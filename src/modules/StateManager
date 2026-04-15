@@ -32,3 +32,59 @@ export function saveChatData(data) {
     // but you can force a save if you update inventory mid-turn:
     // context.saveChat();
 }
+
+import { getContext } from "../../../../extensions.js";
+
+const EXT_ID = "universal-immersion-engine";
+
+export function migrateLegacyData() {
+    const context = getContext();
+    
+    // Get the global settings (where data used to spill)
+    const globalSettings = window.extension_settings[EXT_ID] || {};
+    
+    // Check if there is old RPG data in global settings
+    const hasOldData = globalSettings.inventory || globalSettings.phone || globalSettings.databank;
+    
+    // If no old data, or no chat open, abort migration
+    if (!hasOldData || !context.chatId || !context.chat_metadata) {
+        return false;
+    }
+    
+    console.log("[UIE] Legacy data found. Migrating to current chat...");
+    
+    // 1. Move data into the current chat's metadata
+    context.chat_metadata[EXT_ID] = {
+        inventory: globalSettings.inventory || [],
+        phone: globalSettings.phone || { messages: [], activeContacts: [] },
+        databank: globalSettings.databank || {}
+    };
+    
+    // 2. DELETE the data from global settings so it stops spilling
+    delete globalSettings.inventory;
+    delete globalSettings.phone;
+    delete globalSettings.databank;
+    
+    // 3. Save the global settings so the deletion is permanent
+    if (typeof window.saveSettingsDebounced === 'function') {
+        window.saveSettingsDebounced();
+    }
+    
+    return true;
+}
+
+import { eventSource, event_types } from "../../../../script.js";
+import { migrateLegacyData, getChatData } from "./modules/stateManager.js";
+
+eventSource.on(event_types.CHAT_CHANGED, () => {
+    // Run migration first. It will return true if it actually moved data.
+    const didMigrate = migrateLegacyData();
+    
+    // Now load data safely (it will either be the freshly migrated data, 
+    // existing chat data, or blank new data)
+    const localData = getChatData();
+    
+    UIE.Phone.loadData(localData.phone);
+    UIE.Inventory.loadData(localData.inventory);
+    UIE.Databank.loadData(localData.databank);
+});
