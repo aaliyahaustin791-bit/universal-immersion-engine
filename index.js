@@ -8,25 +8,6 @@ const baseUrl = (() => {
         const p = basePathFallback.startsWith("/") ? basePathFallback : `/${basePathFallback}`;
         return `${p}/`;
     }
-    // --- NEW: Safe Dynamic Loading for Chat State ---
-    try {
-        const stScript = await import("../../../../script.js");
-        const stateManager = await import("./src/modules/StateManager.js");
-
-        stScript.eventSource.on(stScript.event_types.CHAT_CHANGED, () => {
-            stateManager.migrateLegacyData();
-            const localData = stateManager.getChatData();
-            
-            if (window.UIE) {
-                if (window.UIE.Phone?.loadData) window.UIE.Phone.loadData(localData.phone);
-                if (window.UIE.Inventory?.loadData) window.UIE.Inventory.loadData(localData.inventory);
-                if (window.UIE.Databank?.loadData) window.UIE.Databank.loadData(localData.databank);
-            }
-        });
-        console.log("[UIE] Chat state listener attached successfully.");
-    } catch (err) {
-        console.error("[UIE] Failed to load chat state modules:", err);
-    }
 })();
 try {
     window.UIE_BASEURL = baseUrl;
@@ -261,45 +242,33 @@ jQuery(async () => {
         // 5. Finalize (critical-ready)
         Core.updateLayout();
         try { $("#uie-battle-window").hide().css("display", "none"); } catch (_) {}
+        
+        // --- NEW: Safe Global Loading for Chat State ---
+        try {
+            const stateManager = await import(`./src/modules/StateManager.js?v=${uieBuildV}`);
+            if (window.eventSource && window.event_types) {
+                 window.eventSource.on(window.event_types.CHAT_CHANGED, () => {
+                     stateManager.migrateLegacyData();
+                     const localData = stateManager.getChatData();
+                     
+                     if (window.UIE) {
+                         if (window.UIE.Phone?.loadData) window.UIE.Phone.loadData(localData.phone);
+                         if (window.UIE.Inventory?.loadData) window.UIE.Inventory.loadData(localData.inventory);
+                         if (window.UIE.Databank?.loadData) window.UIE.Databank.loadData(localData.databank);
+                     }
+                 });
+                 console.log("[UIE] Chat state listener attached safely!");
+            } else {
+                 console.warn("[UIE] window.eventSource not found. Cannot attach chat state listener.");
+            }
+        } catch (err) {
+            console.error("[UIE] Failed to attach chat state listener:", err);
+        }
+
         console.log("[UIE] Ready.");
 
     } catch (e) {
         console.error("[UIE] Critical Initialization Error:", e);
         markInitError("critical", e);
-    }
-});
-
-// Listen for when a chat is opened or switched
-eventSource.on(event_types.CHAT_CHANGED, () => {
-    const localData = getChatData();
-    
-    // Call your existing UI refresh functions here
-    // but pass them the LOCAL data instead of global settings
-    UIE.Phone.loadData(localData.phone);
-    UIE.Inventory.loadData(localData.inventory);
-    UIE.Databank.loadData(localData.databank);
-    
-    console.log("[UIE] Loaded chat-specific data");
-});
-
-eventSource.on(event_types.CHAT_CHANGED, () => {
-    // 1. Migrate old data if needed (runs once)
-    migrateLegacyData();
-    
-    // 2. Grab the data for the newly opened chat
-    const localData = getChatData();
-    
-    // 3. Update the UI modules 
-    // (Adjust these to match how your specific modules are loaded globally)
-    if (window.UIE) {
-        if (window.UIE.Phone && typeof window.UIE.Phone.loadData === 'function') {
-             window.UIE.Phone.loadData(localData.phone);
-        }
-        if (window.UIE.Inventory && typeof window.UIE.Inventory.loadData === 'function') {
-             window.UIE.Inventory.loadData(localData.inventory);
-        }
-        if (window.UIE.Databank && typeof window.UIE.Databank.loadData === 'function') {
-             window.UIE.Databank.loadData(localData.databank);
-        }
     }
 });
