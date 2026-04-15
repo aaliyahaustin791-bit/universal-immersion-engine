@@ -1,9 +1,7 @@
-import { getContext } from "../../../../extensions.js";
-
 const EXT_ID = "universal-immersion-engine";
 
 export function getChatData() {
-    const context = getContext();
+    const context = window.getContext();
     if (!context.chatId || !context.chat_metadata) {
         return { inventory: [], phone: {}, databank: {} };
     }
@@ -18,13 +16,13 @@ export function getChatData() {
 }
 
 export function saveChatData(data) {
-    const context = getContext();
+    const context = window.getContext();
     if (!context.chatId || !context.chat_metadata) return;
     context.chat_metadata[EXT_ID] = data;
 }
 
 export function migrateLegacyData() {
-    const context = getContext();
+    const context = window.getContext();
     const globalSettings = window.extension_settings?.[EXT_ID] || {};
     const hasOldData = globalSettings.inventory || globalSettings.phone || globalSettings.databank;
     
@@ -36,7 +34,6 @@ export function migrateLegacyData() {
         phone: globalSettings.phone || { messages: [], activeContacts: [] },
         databank: globalSettings.databank || {}
     };
-    
     delete globalSettings.inventory;
     delete globalSettings.phone;
     delete globalSettings.databank;
