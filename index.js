@@ -294,11 +294,10 @@ window.eventSource.on('characterMessageRendered', onMessageReceived);
     }
 });
 
-// Put this at the bottom of your index.js (NO 'import' statements)
-
 jQuery(async () => {
     try {
-        // 1. Delay Context Creation
+        // --- UIE PHONE AUDIO SYSTEM ---
+        
         let audioCtx = null;
         function getAudioContext() {
             if (!audioCtx) {
@@ -307,38 +306,83 @@ jQuery(async () => {
             return audioCtx;
         }
 
-        // 2. Safely Intercept Play
+        // Create a distortion curve for that "crunchy" phone speaker sound
+        function makeDistortionCurve(amount = 20) {
+            const n_samples = 44100;
+            const curve = new Float32Array(n_samples);
+            const deg = Math.PI / 180;
+            for (let i = 0; i < n_samples; ++i) {
+                const x = (i * 2) / n_samples - 1;
+                curve[i] = ((3 + amount) * x * 20 * deg) / (Math.PI + amount * Math.abs(x));
+            }
+            return curve;
+        }
+
         const originalPlay = HTMLAudioElement.prototype.play;
         
         HTMLAudioElement.prototype.play = function() {
             try {
-                // Only init context when ST actually tries to play something
                 const ctx = getAudioContext();
                 if (ctx.state === 'suspended') ctx.resume();
 
-                // Prevent duplicate graphs on the same element
+                // 1. Setup the graph ONCE per audio element
                 if (!this.dataset.uieGraphSetup) {
                     this.dataset.uieGraphSetup = "true";
                     
-                    // *** YOUR GRAPH SETUP CODE GOES HERE ***
-                    // (e.g., const source = ctx.createMediaElementSource(this); )
-                    console.log('[UIE] Attached phone filter to new audio element.');
+                    const source = ctx.createMediaElementSource(this);
+                    const dryGain = ctx.createGain(); // Normal volume
+                    const wetGain = ctx.createGain(); // Filtered volume
+                    
+                    // Filters
+                    const highpass = ctx.createBiquadFilter();
+                    highpass.type = 'highpass';
+                    highpass.frequency.value = 400; // Cut deep bass
+                    
+                    const lowpass = ctx.createBiquadFilter();
+                    lowpass.type = 'lowpass';
+                    lowpass.frequency.value = 3000; // Cut crisp highs
+                    
+                    // Distortion (Static/Crunch)
+                    const distortion = ctx.createWaveShaper();
+                    distortion.curve = makeDistortionCurve(20);
+                    distortion.oversample = '4x';
+                    
+                    // Route Dry Path
+                    source.connect(dryGain);
+                    dryGain.connect(ctx.destination);
+                    
+                    // Route Wet (Phone) Path
+                    source.connect(highpass);
+                    highpass.connect(lowpass);
+                    lowpass.connect(distortion);
+                    distortion.connect(wetGain);
+                    wetGain.connect(ctx.destination);
+                    
+                    // Store nodes so we can toggle them instantly
+                    this.uieNodes = { wetGain, dryGain };
+                    console.log('[UIE] Phone filter attached safely.');
                 }
                 
-                // *** YOUR TOGGLE LOGIC GOES HERE ***
-                // (e.g., check context.chatId and apply phone effect)
+                // 2. Toggle Logic
+                // TODO: Replace this "true" with your UIE metadata check
+                // e.g., const isPhoneActive = window.UIE.isCallActive;
+                const isPhoneActive = true; 
+                
+                if (this.uieNodes) {
+                    this.uieNodes.dryGain.gain.value = isPhoneActive ? 0 : 1;
+                    this.uieNodes.wetGain.gain.value = isPhoneActive ? 1 : 0;
+                }
 
             } catch (e) {
-                // If audio fails, log it but DON'T crash the extension
-                console.warn('[UIE] Audio filter failed to attach:', e);
+                console.warn('[UIE] Filter bypassed (audio will play normally):', e);
             }
             
-            // 3. Return the original promise so ST doesn't break
+            // 3. Let SillyTavern play the audio
             return originalPlay.apply(this, arguments);
         };
         
-        console.log('[UIE] Phone Audio Interceptor loaded safely.');
+        console.log('[UIE] Phone Audio interceptor loaded.');
     } catch (error) {
-        console.error('[UIE] Fatal error initializing audio interceptor:', error);
+        console.error('[UIE] Fatal initialization error:', error);
     }
 });
