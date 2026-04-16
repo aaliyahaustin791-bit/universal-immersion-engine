@@ -1,16 +1,3 @@
-// index.js
-import { initPhoneAudio } from './phone_audio.js';
-
-// Other imports...
-
-jQuery(async () => {
-    // Initialize your data storage
-    initMetadataStorage();
-    
-    // Initialize the phone audio interceptor
-    initPhoneAudio();
-});
-
 const EXT_ID = "universal-immersion-engine";
 const basePathFallback = `scripts/extensions/third-party/${EXT_ID}`;
 const baseUrl = (() => {
@@ -307,15 +294,51 @@ window.eventSource.on('characterMessageRendered', onMessageReceived);
     }
 });
 
-// Inside index.js, way at the bottom:
+// Put this at the bottom of your index.js (NO 'import' statements)
 
-const UIE_Audio = (function() {
-    const audioCtx = new (window.AudioContext)();
-    // ... hide all the graph logic inside here ...
-    
-    return {
-        init: function() { /* setup interceptor */ }
-    };
-})();
+jQuery(async () => {
+    try {
+        // 1. Delay Context Creation
+        let audioCtx = null;
+        function getAudioContext() {
+            if (!audioCtx) {
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            }
+            return audioCtx;
+        }
 
-UIE_Audio.init();
+        // 2. Safely Intercept Play
+        const originalPlay = HTMLAudioElement.prototype.play;
+        
+        HTMLAudioElement.prototype.play = function() {
+            try {
+                // Only init context when ST actually tries to play something
+                const ctx = getAudioContext();
+                if (ctx.state === 'suspended') ctx.resume();
+
+                // Prevent duplicate graphs on the same element
+                if (!this.dataset.uieGraphSetup) {
+                    this.dataset.uieGraphSetup = "true";
+                    
+                    // *** YOUR GRAPH SETUP CODE GOES HERE ***
+                    // (e.g., const source = ctx.createMediaElementSource(this); )
+                    console.log('[UIE] Attached phone filter to new audio element.');
+                }
+                
+                // *** YOUR TOGGLE LOGIC GOES HERE ***
+                // (e.g., check context.chatId and apply phone effect)
+
+            } catch (e) {
+                // If audio fails, log it but DON'T crash the extension
+                console.warn('[UIE] Audio filter failed to attach:', e);
+            }
+            
+            // 3. Return the original promise so ST doesn't break
+            return originalPlay.apply(this, arguments);
+        };
+        
+        console.log('[UIE] Phone Audio Interceptor loaded safely.');
+    } catch (error) {
+        console.error('[UIE] Fatal error initializing audio interceptor:', error);
+    }
+});
