@@ -1,3 +1,16 @@
+// index.js
+import { initPhoneAudio } from './phone_audio.js';
+
+// Other imports...
+
+jQuery(async () => {
+    // Initialize your data storage
+    initMetadataStorage();
+    
+    // Initialize the phone audio interceptor
+    initPhoneAudio();
+});
+
 const EXT_ID = "universal-immersion-engine";
 const basePathFallback = `scripts/extensions/third-party/${EXT_ID}`;
 const baseUrl = (() => {
