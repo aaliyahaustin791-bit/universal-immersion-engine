@@ -306,3 +306,16 @@ window.eventSource.on('characterMessageRendered', onMessageReceived);
         markInitError("critical", e);
     }
 });
+
+// Inside index.js, way at the bottom:
+
+const UIE_Audio = (function() {
+    const audioCtx = new (window.AudioContext)();
+    // ... hide all the graph logic inside here ...
+    
+    return {
+        init: function() { /* setup interceptor */ }
+    };
+})();
+
+UIE_Audio.init();
