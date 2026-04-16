@@ -364,9 +364,25 @@ jQuery(async () => {
                 }
                 
                 // 2. Toggle Logic
-                // TODO: Replace this "true" with your UIE metadata check
-                // e.g., const isPhoneActive = window.UIE.isCallActive;
-                const isPhoneActive = true; 
+                // Grab SillyTavern's current chat context safely
+const context = window.SillyTavern?.getContext ? window.SillyTavern.getContext() : null;
+
+let isPhoneActive = false;
+
+// Ensure we are actually in a chat and the metadata exists
+if (context && context.chatId && context.chatMetadata) {
+    
+    // Read from your UIE metadata object
+    // Adjust 'UIE' and 'isCallActive' to match your actual keys!
+    const uieData = context.chatMetadata.UIE || {};
+    
+    if (uieData.isCallActive === true) {
+        isPhoneActive = true;
+    }
+}
+
+// Quick log for debugging so you can see it working in the console
+// console.log(`[UIE] Phone filter active: ${isPhoneActive}`); 
                 
                 if (this.uieNodes) {
                     this.uieNodes.dryGain.gain.value = isPhoneActive ? 0 : 1;
