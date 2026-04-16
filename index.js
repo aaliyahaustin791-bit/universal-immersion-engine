@@ -257,6 +257,27 @@ jQuery(async () => {
                          if (window.UIE.Databank?.loadData) window.UIE.Databank.loadData(localData.databank);
                      }
                  });
+
+                function onMessageReceived(messageId) {
+    const context = SillyTavern.getContext();
+    const msg = context.chat[messageId];
+    
+    // Only trigger on character messages, not swipes or user inputs
+    if (!msg || msg.is_user) return;
+
+    // Check if message contains our trigger
+    if (msg.mes.includes('[SMS]') || msg.mes.includes('📞')) {
+        // Path is relative to the ST root directory
+        const ringPath = '/scripts/extensions/universal-immersion-engine/assets/ringtone.mp3';
+        const ringtone = new Audio(ringPath);
+        
+        ringtone.volume = 0.6;
+        ringtone.play().catch(e => console.warn('Audio play blocked by browser policy:', e));
+    }
+}
+
+// Listen for new messages
+window.eventSource.on('characterMessageRendered', onMessageReceived);
                  console.log("[UIE] Chat state listener attached safely!");
             } else {
                  console.warn("[UIE] window.eventSource not found. Cannot attach chat state listener.");
