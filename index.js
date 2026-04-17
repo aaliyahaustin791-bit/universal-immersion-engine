@@ -357,28 +357,30 @@ jQuery(async () => {
         }
 
         HTMLAudioElement.prototype.play = function() {
-            try {
-                const context = window.SillyTavern?.getContext?.();
-                const isCallActive = context?.chatMetadata?.UIE?.isCallActive === true;
-
-                // If a call is active, and this isn't our own ringtone playing
-                if (isCallActive && !this.src.includes('ringtone.mp3')) {
-                    startStatic();
-                    
-                    // Stop the static when this audio element finishes or pauses
-                    this.addEventListener('ended', stopStatic, { once: true });
-                    this.addEventListener('pause', stopStatic, { once: true });
-                }
-            } catch (error) {
-                console.warn("[UIE] Audio filter workaround failed:", error);
-            }
-
-            // ALWAYS let the original TTS audio play cleanly!
-            return originalPlay.apply(this, arguments);
-        };
+    try {
+        const context = window.SillyTavern?.getContext?.();
+        const isCallActive = context?.chatMetadata?.UIE?.isCallActive === true;
         
-        console.log('[UIE] Phone Audio workaround loaded.');
-    } catch (err) {
-        console.error("[UIE] Init Error:", err);
+        console.log('[UIE] Audio play attempt:', {
+            src: this.src,
+            isCallActive,
+            duration: this.duration,
+            currentTime: this.currentTime
+        });
+
+        // If a call is active, and this isn't our own ringtone playing
+        if (isCallActive && !this.src.includes('ringtone.mp3')) {
+            console.log('[UIE] Starting static for TTS');
+            startStatic();
+            
+            // Stop the static when this audio element finishes or pauses
+            this.addEventListener('ended', stopStatic, { once: true });
+            this.addEventListener('pause', stopStatic, { once: true });
+        }
+    } catch (error) {
+        console.warn("[UIE] Audio filter workaround failed:", error);
     }
-});
+
+    // ALWAYS let the original TTS audio play cleanly!
+    return originalPlay.apply(this, arguments);
+};
