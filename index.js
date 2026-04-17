@@ -317,8 +317,6 @@ jQuery(async () => {
             }
             return curve;
         }
-
-        const originalPlay = HTMLAudioElement.prototype.play;
         
         const originalPlay = HTMLAudioElement.prototype.play;
 
