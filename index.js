@@ -243,20 +243,34 @@ jQuery(async () => {
         Core.updateLayout();
         try { $("#uie-battle-window").hide().css("display", "none"); } catch (_) {}
         
-        // --- NEW: Safe Global Loading for Chat State ---
+                // --- NEW: Safe Global Loading for Chat State ---
         try {
             const stateManager = await import(`./src/modules/StateManager.js?v=${uieBuildV}`);
-            if (window.eventSource && window.event_types) {
-                 window.eventSource.on(window.event_types.CHAT_CHANGED, () => {
-                     stateManager.migrateLegacyData();
-                     const localData = stateManager.getChatData();
-                     
-                     if (window.UIE) {
-                         if (window.UIE.Phone?.loadData) window.UIE.Phone.loadData(localData.phone);
-                         if (window.UIE.Inventory?.loadData) window.UIE.Inventory.loadData(localData.inventory);
-                         if (window.UIE.Databank?.loadData) window.UIE.Databank.loadData(localData.databank);
-                     }
-                 });
+            
+            const attachChatListener = () => {
+                if (window.eventSource && window.event_types) {
+                     window.eventSource.on(window.event_types.CHAT_CHANGED, () => {
+                         stateManager.migrateLegacyData();
+                         const localData = stateManager.getChatData();
+                         
+                         if (window.UIE) {
+                             if (window.UIE.Phone?.loadData) window.UIE.Phone.loadData(localData.phone);
+                             if (window.UIE.Inventory?.loadData) window.UIE.Inventory.loadData(localData.inventory);
+                             if (window.UIE.Databank?.loadData) window.UIE.Databank.loadData(localData.databank);
+                         }
+                     });
+                     console.log("[UIE] Chat state listener attached safely!");
+                } else {
+                     // SillyTavern isn't ready yet, check again in 500ms
+                     setTimeout(attachChatListener, 500);
+                }
+            };
+            
+            attachChatListener();
+            
+        } catch (err) {
+            console.error("[UIE] Failed to attach chat state listener:", err);
+        }
 
                 function onMessageReceived(messageId) {
     const context = SillyTavern.getContext();
