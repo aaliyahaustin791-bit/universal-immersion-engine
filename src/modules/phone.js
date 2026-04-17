@@ -282,6 +282,41 @@ export function initPhone() {
         }
     });
 
+    // Inside your existing phone.js
+
+// ... your existing phone code ...
+
+export function initPhone() {
+    // ... your other setup code ...
+
+    // ADD THIS TO HOOK UP THE AUDIO FILTER:
+    const acceptBtn = document.getElementById('call-accept-btn');
+    const endBtn = document.getElementById('call-end-btn');
+
+    if (acceptBtn) {
+        acceptBtn.addEventListener('click', () => {
+            const context = window.SillyTavern?.getContext();
+            if (context && context.chatId) {
+                if (!context.chatMetadata.UIE) context.chatMetadata.UIE = {};
+                context.chatMetadata.UIE.isCallActive = true;
+                context.saveChat();
+                console.log("[UIE] Call Answered! Filter ON.");
+            }
+        });
+    }
+
+    if (endBtn) {
+        endBtn.addEventListener('click', () => {
+            const context = window.SillyTavern?.getContext();
+            if (context && context.chatId && context.chatMetadata.UIE) {
+                context.chatMetadata.UIE.isCallActive = false;
+                context.saveChat();
+                console.log("[UIE] Call Ended. Filter OFF.");
+            }
+        });
+    }
+}
+
     const parseChatTimestamp = () => {
         try {
             const chat = document.querySelector("#chat");
