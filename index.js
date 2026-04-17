@@ -219,7 +219,6 @@ jQuery(async () => {
             ["./src/modules/sprites.js", "initSprites"],
             ["./src/modules/features/stats.js", "initStats"],
             ["./src/modules/phone.js", "initPhone"],
-            ["./src/modules/phone-call-handlers.js", "initPhoneCallHandlers"],
         ];
 
         const runDeferredModules = async () => {
