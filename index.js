@@ -294,7 +294,7 @@ window.eventSource.on('characterMessageRendered', onMessageReceived);
     }
 });
 
-jQuery(async () => {
+{
     try {
         // --- UIE PHONE AUDIO SYSTEM ---
         
