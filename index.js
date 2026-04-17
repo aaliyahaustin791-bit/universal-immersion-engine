@@ -297,7 +297,6 @@ window.eventSource.on('characterMessageRendered', onMessageReceived);
 jQuery(async () => {
     try {
         // --- UIE PHONE AUDIO SYSTEM ---
-        
         let audioCtx = null;
         function getAudioContext() {
             if (!audioCtx) {
@@ -354,7 +353,6 @@ jQuery(async () => {
                     wetGain.connect(ctx.destination);
                     
                     this.uieNodes = { wetGain, dryGain };
-                    console.log('[UIE] Phone filter attached safely.');
                 }
 
                 const context = window.SillyTavern?.getContext?.();
@@ -377,64 +375,8 @@ jQuery(async () => {
             return originalPlay.apply(this, arguments);
         };
         
+        console.log('[UIE] Phone Audio interceptor loaded.');
     } catch (err) {
         console.error("[UIE] Init Error:", err);
-    }
-});
-        // 2. Read context and toggle volumes dynamically
-        const context = window.SillyTavern?.getContext?.();
-        const isCallActive = context?.chatMetadata?.UIE?.isCallActive === true;
-
-        if (this.uieNodes) {
-            if (isCallActive) {
-                this.uieNodes.dryGain.gain.value = 0; // Mute normal
-                this.uieNodes.wetGain.gain.value = 1; // Play static
-            } else {
-                this.uieNodes.dryGain.gain.value = 1; // Play normal
-                this.uieNodes.wetGain.gain.value = 0; // Mute static
-            }
-        }
-
-    // REQUIRED to prevent crashes: Actually run the play function and return its Promise!
-    return originalPlay.apply(this, arguments);
-};
-                
-                // 2. Toggle Logic
-                // Grab SillyTavern's current chat context safely
-const context = window.SillyTavern?.getContext ? window.SillyTavern.getContext() : null;
-
-let isPhoneActive = false;
-
-// Ensure we are actually in a chat and the metadata exists
-if (context && context.chatId && context.chatMetadata) {
-    
-    // Read from your UIE metadata object
-    // Adjust 'UIE' and 'isCallActive' to match your actual keys!
-    const uieData = context.chatMetadata.UIE || {};
-    
-    if (uieData.isCallActive === true) {
-        isPhoneActive = true;
-    }
-}
-
-// Quick log for debugging so you can see it working in the console
-// console.log(`[UIE] Phone filter active: ${isPhoneActive}`); 
-                
-                if (this.uieNodes) {
-                    this.uieNodes.dryGain.gain.value = isPhoneActive ? 0 : 1;
-                    this.uieNodes.wetGain.gain.value = isPhoneActive ? 1 : 0;
-                }
-
-            } catch (e) {
-                console.warn('[UIE] Filter bypassed (audio will play normally):', e);
-            }
-            
-            // 3. Let SillyTavern play the audio
-            return originalPlay.apply(this, arguments);
-        };
-        
-        console.log('[UIE] Phone Audio interceptor loaded.');
-    } catch (error) {
-        console.error('[UIE] Fatal initialization error:', error);
     }
 });
