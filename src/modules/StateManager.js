@@ -1,43 +1,76 @@
 const EXT_ID = "universal-immersion-engine";
 
+// Helper to safely get the ST context across versions
+function getSafeContext() {
+    return typeof window.SillyTavern?.getContext === 'function' 
+        ? window.SillyTavern.getContext() 
+        : (typeof window.getContext === 'function' ? window.getContext() : null);
+}
+
 export function getChatData() {
-    const context = window.getContext();
-    if (!context.chatId || !context.chat_metadata) {
+    const context = getSafeContext();
+    if (!context || !context.chatId) {
         return { inventory: [], phone: {}, databank: {} };
     }
-    if (!context.chat_metadata[EXT_ID]) {
-        context.chat_metadata[EXT_ID] = {
+    
+    // Handle ST naming differences
+    const metadata = context.chatMetadata || context.chat_metadata || window.chat_metadata;
+    if (!metadata) {
+        return { inventory: [], phone: {}, databank: {} };
+    }
+
+    if (!metadata[EXT_ID]) {
+        metadata[EXT_ID] = {
             inventory: [],
             phone: { messages: [], activeContacts: [] },
             databank: {}
         };
     }
-    return context.chat_metadata[EXT_ID];
+    return metadata[EXT_ID];
 }
 
 export function saveChatData(data) {
-    const context = window.getContext();
-    if (!context.chatId || !context.chat_metadata) return;
-    context.chat_metadata[EXT_ID] = data;
+    const context = getSafeContext();
+    if (!context || !context.chatId) return;
+
+    const metadata = context.chatMetadata || context.chat_metadata || window.chat_metadata;
+    if (metadata) {
+        metadata[EXT_ID] = data;
+    }
+
+    // CRITICAL FIX: Tell SillyTavern to write this to disk!
+    if (typeof window.saveChatDebounced === 'function') {
+        window.saveChatDebounced();
+    } else if (typeof window.saveMetadataDebounced === 'function') {
+        window.saveMetadataDebounced();
+    } else {
+        console.warn("[UIE] Could not find ST save function to persist data!");
+    }
 }
 
 export function migrateLegacyData() {
-    const context = window.getContext();
+    const context = getSafeContext();
     const globalSettings = window.extension_settings?.[EXT_ID] || {};
     const hasOldData = globalSettings.inventory || globalSettings.phone || globalSettings.databank;
     
-    if (!hasOldData || !context.chatId || !context.chat_metadata) return false;
+    if (!hasOldData || !context || !context.chatId) return false;
+    
+    const metadata = context.chatMetadata || context.chat_metadata || window.chat_metadata;
+    if (!metadata) return false;
     
     console.log("[UIE] Migrating legacy data to chat...");
-    context.chat_metadata[EXT_ID] = {
+    metadata[EXT_ID] = {
         inventory: globalSettings.inventory || [],
         phone: globalSettings.phone || { messages: [], activeContacts: [] },
         databank: globalSettings.databank || {}
     };
+    
     delete globalSettings.inventory;
     delete globalSettings.phone;
     delete globalSettings.databank;
     
     if (typeof window.saveSettingsDebounced === 'function') window.saveSettingsDebounced();
+    if (typeof window.saveChatDebounced === 'function') window.saveChatDebounced();
+    
     return true;
 }
