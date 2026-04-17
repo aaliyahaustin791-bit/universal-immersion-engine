@@ -296,86 +296,88 @@ window.eventSource.on('characterMessageRendered', onMessageReceived);
 
 jQuery(async () => {
     try {
-        // --- UIE PHONE AUDIO SYSTEM ---
+        // --- UIE PHONE AUDIO SYSTEM (WORKAROUND) ---
+        const originalPlay = HTMLAudioElement.prototype.play;
+        
         let audioCtx = null;
+        let staticNode = null;
+        let staticGain = null;
+
         function getAudioContext() {
-            if (!audioCtx) {
-                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-            }
+            if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
             return audioCtx;
         }
 
-        function makeDistortionCurve(amount = 20) {
-            const n_samples = 44100;
-            const curve = new Float32Array(n_samples);
-            const deg = Math.PI / 180;
-            for (let i = 0; i < n_samples; ++i) {
-                const x = (i * 2) / n_samples - 1;
-                curve[i] = ((3 + amount) * x * 20 * deg) / (Math.PI + amount * Math.abs(x));
-            }
-            return curve;
-        }
-
-        const originalPlay = HTMLAudioElement.prototype.play;
-
-        HTMLAudioElement.prototype.play = function() {
+        function startStatic() {
             try {
                 const ctx = getAudioContext();
                 if (ctx.state === 'suspended') ctx.resume();
-
-                if (!this.dataset.uieGraphSetup) {
-                    this.dataset.uieGraphSetup = "true";
-                // this.crossOrigin = "anonymous"; 
-                    
-                    const source = ctx.createMediaElementSource(this);
-                    const dryGain = ctx.createGain();
-                    const wetGain = ctx.createGain();
-                    
-                    const highpass = ctx.createBiquadFilter();
-                    highpass.type = 'highpass';
-                    highpass.frequency.value = 400;
-                    
-                    const lowpass = ctx.createBiquadFilter();
-                    lowpass.type = 'lowpass';
-                    lowpass.frequency.value = 3000;
-                    
-                    const distortion = ctx.createWaveShaper();
-                    distortion.curve = makeDistortionCurve(20);
-                    distortion.oversample = '4x';
-                    
-                    source.connect(dryGain);
-                    dryGain.connect(ctx.destination);
-                    
-                    source.connect(highpass);
-                    highpass.connect(lowpass);
-                    lowpass.connect(distortion);
-                    distortion.connect(wetGain);
-                    wetGain.connect(ctx.destination);
-                    
-                    this.uieNodes = { wetGain, dryGain };
+                
+                if (staticNode) return; // Already playing static
+                
+                // Generate 2 seconds of white noise
+                const bufferSize = ctx.sampleRate * 2;
+                const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+                const data = buffer.getChannelData(0);
+                for (let i = 0; i < bufferSize; i++) {
+                    data[i] = Math.random() * 2 - 1;
                 }
+                
+                staticNode = ctx.createBufferSource();
+                staticNode.buffer = buffer;
+                staticNode.loop = true;
+                
+                // Filter to sound like a low-fi phone line
+                const filter = ctx.createBiquadFilter();
+                filter.type = 'bandpass';
+                filter.frequency.value = 1000;
+                filter.Q.value = 0.5; // Wider band
+                
+                staticGain = ctx.createGain();
+                staticGain.gain.value = 0.03; // Keep it subtle so we can hear the TTS!
+                
+                staticNode.connect(filter);
+                filter.connect(staticGain);
+                staticGain.connect(ctx.destination);
+                
+                staticNode.start();
+            } catch (e) {
+                console.warn("[UIE] Failed to start static overlay:", e);
+            }
+        }
 
+        function stopStatic() {
+            try {
+                if (staticNode) {
+                    staticNode.stop();
+                    staticNode.disconnect();
+                    staticNode = null;
+                }
+            } catch (e) {}
+        }
+
+        HTMLAudioElement.prototype.play = function() {
+            try {
                 const context = window.SillyTavern?.getContext?.();
                 const isCallActive = context?.chatMetadata?.UIE?.isCallActive === true;
 
-                if (this.uieNodes) {
-                    if (isCallActive) {
-                        this.uieNodes.dryGain.gain.value = 0;
-                        this.uieNodes.wetGain.gain.value = 1;
-                    } else {
-                        this.uieNodes.dryGain.gain.value = 1;
-                        this.uieNodes.wetGain.gain.value = 0;
-                    }
+                // If a call is active, and this isn't our own ringtone playing
+                if (isCallActive && !this.src.includes('ringtone.mp3')) {
+                    startStatic();
+                    
+                    // Stop the static when this audio element finishes or pauses
+                    this.addEventListener('ended', stopStatic, { once: true });
+                    this.addEventListener('pause', stopStatic, { once: true });
                 }
-
             } catch (error) {
-                console.warn("[UIE] Audio filter failed, falling back:", error);
+                console.warn("[UIE] Audio filter workaround failed:", error);
             }
 
+            // ALWAYS let the original TTS audio play cleanly!
             return originalPlay.apply(this, arguments);
         };
         
-        console.log('[UIE] Phone Audio interceptor loaded.');
+        console.log('[UIE] Phone Audio workaround loaded.');
     } catch (err) {
         console.error("[UIE] Init Error:", err);
     }
