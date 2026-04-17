@@ -282,13 +282,6 @@ export function initPhone() {
         }
     });
 
-    // Inside your existing phone.js
-
-// ... your existing phone code ...
-
-export function initPhone() {
-    // ... your other setup code ...
-
     // ADD THIS TO HOOK UP THE AUDIO FILTER:
     const acceptBtn = document.getElementById('call-accept-btn');
     const endBtn = document.getElementById('call-end-btn');
