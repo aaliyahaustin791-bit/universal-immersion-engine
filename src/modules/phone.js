@@ -282,34 +282,26 @@ export function initPhone() {
         }
     });
 
-    // ADD THIS TO HOOK UP THE AUDIO FILTER:
-    const acceptBtn = document.getElementById('call-accept-btn');
-    const endBtn = document.getElementById('call-end-btn');
+// ADD THIS TO HOOK UP THE AUDIO FILTER:
+// Using inline queries so we don't accidentally overwrite your existing variables!
 
-    if (acceptBtn) {
-        acceptBtn.addEventListener('click', () => {
-            const context = window.SillyTavern?.getContext();
-            if (context && context.chatId) {
-                if (!context.chatMetadata.UIE) context.chatMetadata.UIE = {};
-                context.chatMetadata.UIE.isCallActive = true;
-                context.saveChat();
-                console.log("[UIE] Call Answered! Filter ON.");
-            }
-        });
+document.getElementById('call-accept-btn')?.addEventListener('click', () => {
+    const context = window.SillyTavern?.getContext?.();
+    if (context && context.chatId) {
+        if (!context.chatMetadata.UIE) context.chatMetadata.UIE = {};
+        context.chatMetadata.UIE.isCallActive = true;
+        console.log("[UIE] Call Answered! Filter ON.");
     }
+});
 
-    if (endBtn) {
-        endBtn.addEventListener('click', () => {
-            const context = window.SillyTavern?.getContext();
-            if (context && context.chatId && context.chatMetadata.UIE) {
-                context.chatMetadata.UIE.isCallActive = false;
-                context.saveChat();
-                console.log("[UIE] Call Ended. Filter OFF.");
-            }
-        });
+document.getElementById('call-end-btn')?.addEventListener('click', () => {
+    const context = window.SillyTavern?.getContext?.();
+    if (context && context.chatId && context.chatMetadata.UIE) {
+        context.chatMetadata.UIE.isCallActive = false;
+        console.log("[UIE] Call Ended. Filter OFF.");
     }
-}
-
+});
+    
     const parseChatTimestamp = () => {
         try {
             const chat = document.querySelector("#chat");
