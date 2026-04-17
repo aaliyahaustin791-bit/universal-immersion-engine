@@ -325,7 +325,7 @@ jQuery(async () => {
 
                 if (!this.dataset.uieGraphSetup) {
                     this.dataset.uieGraphSetup = "true";
-                    this.crossOrigin = "anonymous"; 
+                // this.crossOrigin = "anonymous"; 
                     
                     const source = ctx.createMediaElementSource(this);
                     const dryGain = ctx.createGain();
