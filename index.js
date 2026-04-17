@@ -320,48 +320,74 @@ jQuery(async () => {
 
         const originalPlay = HTMLAudioElement.prototype.play;
         
-        HTMLAudioElement.prototype.play = function() {
-            try {
-                const ctx = getAudioContext();
-                if (ctx.state === 'suspended') ctx.resume();
+        const originalPlay = HTMLAudioElement.prototype.play;
 
-                // 1. Setup the graph ONCE per audio element
-                if (!this.dataset.uieGraphSetup) {
-                    this.dataset.uieGraphSetup = "true";
-                    
-                    const source = ctx.createMediaElementSource(this);
-                    const dryGain = ctx.createGain(); // Normal volume
-                    const wetGain = ctx.createGain(); // Filtered volume
-                    
-                    // Filters
-                    const highpass = ctx.createBiquadFilter();
-                    highpass.type = 'highpass';
-                    highpass.frequency.value = 400; // Cut deep bass
-                    
-                    const lowpass = ctx.createBiquadFilter();
-                    lowpass.type = 'lowpass';
-                    lowpass.frequency.value = 3000; // Cut crisp highs
-                    
-                    // Distortion (Static/Crunch)
-                    const distortion = ctx.createWaveShaper();
-                    distortion.curve = makeDistortionCurve(20);
-                    distortion.oversample = '4x';
-                    
-                    // Route Dry Path
-                    source.connect(dryGain);
-                    dryGain.connect(ctx.destination);
-                    
-                    // Route Wet (Phone) Path
-                    source.connect(highpass);
-                    highpass.connect(lowpass);
-                    lowpass.connect(distortion);
-                    distortion.connect(wetGain);
-                    wetGain.connect(ctx.destination);
-                    
-                    // Store nodes so we can toggle them instantly
-                    this.uieNodes = { wetGain, dryGain };
-                    console.log('[UIE] Phone filter attached safely.');
-                }
+HTMLAudioElement.prototype.play = function() {
+    try {
+        const ctx = getAudioContext();
+        if (ctx.state === 'suspended') ctx.resume();
+
+        // 1. Setup the graph ONCE per audio element
+        if (!this.dataset.uieGraphSetup) {
+            this.dataset.uieGraphSetup = "true";
+            
+            // REQUIRED for ElevenLabs/External APIs to not mute the filtered audio
+            this.crossOrigin = "anonymous"; 
+            
+            const source = ctx.createMediaElementSource(this);
+            const dryGain = ctx.createGain(); // Normal volume
+            const wetGain = ctx.createGain(); // Filtered volume
+            
+            // Filters
+            const highpass = ctx.createBiquadFilter();
+            highpass.type = 'highpass';
+            highpass.frequency.value = 400;
+            
+            const lowpass = ctx.createBiquadFilter();
+            lowpass.type = 'lowpass';
+            lowpass.frequency.value = 3000;
+            
+            // Distortion
+            const distortion = ctx.createWaveShaper();
+            distortion.curve = makeDistortionCurve(20);
+            distortion.oversample = '4x';
+            
+            // Route Dry Path
+            source.connect(dryGain);
+            dryGain.connect(ctx.destination);
+            
+            // Route Wet Path
+            source.connect(highpass);
+            highpass.connect(lowpass);
+            lowpass.connect(distortion);
+            distortion.connect(wetGain);
+            wetGain.connect(ctx.destination);
+            
+            this.uieNodes = { wetGain, dryGain };
+            console.log('[UIE] Phone filter attached safely.');
+        }
+
+        // 2. Read context and toggle volumes dynamically
+        const context = window.SillyTavern?.getContext?.();
+        const isCallActive = context?.chatMetadata?.UIE?.isCallActive === true;
+
+        if (this.uieNodes) {
+            if (isCallActive) {
+                this.uieNodes.dryGain.gain.value = 0; // Mute normal
+                this.uieNodes.wetGain.gain.value = 1; // Play static
+            } else {
+                this.uieNodes.dryGain.gain.value = 1; // Play normal
+                this.uieNodes.wetGain.gain.value = 0; // Mute static
+            }
+        }
+
+    } catch (error) {
+        console.warn("[UIE] Audio filter failed, falling back to clean audio:", error);
+    }
+
+    // REQUIRED to prevent crashes: Actually run the play function and return its Promise!
+    return originalPlay.apply(this, arguments);
+};
                 
                 // 2. Toggle Logic
                 // Grab SillyTavern's current chat context safely
