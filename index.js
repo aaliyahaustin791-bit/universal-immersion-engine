@@ -306,7 +306,6 @@ jQuery(async () => {
             return audioCtx;
         }
 
-        // Create a distortion curve for that "crunchy" phone speaker sound
         function makeDistortionCurve(amount = 20) {
             const n_samples = 44100;
             const curve = new Float32Array(n_samples);
@@ -317,54 +316,71 @@ jQuery(async () => {
             }
             return curve;
         }
-        
+
         const originalPlay = HTMLAudioElement.prototype.play;
 
-HTMLAudioElement.prototype.play = function() {
-    try {
-        const ctx = getAudioContext();
-        if (ctx.state === 'suspended') ctx.resume();
+        HTMLAudioElement.prototype.play = function() {
+            try {
+                const ctx = getAudioContext();
+                if (ctx.state === 'suspended') ctx.resume();
 
-        // 1. Setup the graph ONCE per audio element
-        if (!this.dataset.uieGraphSetup) {
-            this.dataset.uieGraphSetup = "true";
-            
-            // REQUIRED for ElevenLabs/External APIs to not mute the filtered audio
-            this.crossOrigin = "anonymous"; 
-            
-            const source = ctx.createMediaElementSource(this);
-            const dryGain = ctx.createGain(); // Normal volume
-            const wetGain = ctx.createGain(); // Filtered volume
-            
-            // Filters
-            const highpass = ctx.createBiquadFilter();
-            highpass.type = 'highpass';
-            highpass.frequency.value = 400;
-            
-            const lowpass = ctx.createBiquadFilter();
-            lowpass.type = 'lowpass';
-            lowpass.frequency.value = 3000;
-            
-            // Distortion
-            const distortion = ctx.createWaveShaper();
-            distortion.curve = makeDistortionCurve(20);
-            distortion.oversample = '4x';
-            
-            // Route Dry Path
-            source.connect(dryGain);
-            dryGain.connect(ctx.destination);
-            
-            // Route Wet Path
-            source.connect(highpass);
-            highpass.connect(lowpass);
-            lowpass.connect(distortion);
-            distortion.connect(wetGain);
-            wetGain.connect(ctx.destination);
-            
-            this.uieNodes = { wetGain, dryGain };
-            console.log('[UIE] Phone filter attached safely.');
-        }
+                if (!this.dataset.uieGraphSetup) {
+                    this.dataset.uieGraphSetup = "true";
+                    this.crossOrigin = "anonymous"; 
+                    
+                    const source = ctx.createMediaElementSource(this);
+                    const dryGain = ctx.createGain();
+                    const wetGain = ctx.createGain();
+                    
+                    const highpass = ctx.createBiquadFilter();
+                    highpass.type = 'highpass';
+                    highpass.frequency.value = 400;
+                    
+                    const lowpass = ctx.createBiquadFilter();
+                    lowpass.type = 'lowpass';
+                    lowpass.frequency.value = 3000;
+                    
+                    const distortion = ctx.createWaveShaper();
+                    distortion.curve = makeDistortionCurve(20);
+                    distortion.oversample = '4x';
+                    
+                    source.connect(dryGain);
+                    dryGain.connect(ctx.destination);
+                    
+                    source.connect(highpass);
+                    highpass.connect(lowpass);
+                    lowpass.connect(distortion);
+                    distortion.connect(wetGain);
+                    wetGain.connect(ctx.destination);
+                    
+                    this.uieNodes = { wetGain, dryGain };
+                    console.log('[UIE] Phone filter attached safely.');
+                }
 
+                const context = window.SillyTavern?.getContext?.();
+                const isCallActive = context?.chatMetadata?.UIE?.isCallActive === true;
+
+                if (this.uieNodes) {
+                    if (isCallActive) {
+                        this.uieNodes.dryGain.gain.value = 0;
+                        this.uieNodes.wetGain.gain.value = 1;
+                    } else {
+                        this.uieNodes.dryGain.gain.value = 1;
+                        this.uieNodes.wetGain.gain.value = 0;
+                    }
+                }
+
+            } catch (error) {
+                console.warn("[UIE] Audio filter failed, falling back:", error);
+            }
+
+            return originalPlay.apply(this, arguments);
+        };
+        
+    } catch (err) {
+        console.error("[UIE] Init Error:", err);
+    }
+});
         // 2. Read context and toggle volumes dynamically
         const context = window.SillyTavern?.getContext?.();
         const isCallActive = context?.chatMetadata?.UIE?.isCallActive === true;
@@ -378,10 +394,6 @@ HTMLAudioElement.prototype.play = function() {
                 this.uieNodes.wetGain.gain.value = 0; // Mute static
             }
         }
-
-    } catch (error) {
-        console.warn("[UIE] Audio filter failed, falling back to clean audio:", error);
-    }
 
     // REQUIRED to prevent crashes: Actually run the play function and return its Promise!
     return originalPlay.apply(this, arguments);
