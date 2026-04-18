@@ -852,6 +852,36 @@ function initChatPersistence() {
     chatPollInterval = setInterval(checkChatIdAndLoad, 1000);
 }
 
+// Chat-Bound State Wrappers
+export function getChatState(key, defaultValue = {}) {
+    const context = getContext();
+    if (!context || !context.chatId) return defaultValue;
+    
+    // Ensure metadata structure exists
+    if (!window.chat_metadata) window.chat_metadata = {};
+    if (!window.chat_metadata.uie_state) window.chat_metadata.uie_state = {};
+    
+    return window.chat_metadata.uie_state[key] !== undefined 
+        ? window.chat_metadata.uie_state[key] 
+        : defaultValue;
+}
+
+export function saveChatState(key, value) {
+    const context = getContext();
+    if (!context || !context.chatId) return false;
+    
+    if (!window.chat_metadata) window.chat_metadata = {};
+    if (!window.chat_metadata.uie_state) window.chat_metadata.uie_state = {};
+    
+    window.chat_metadata.uie_state[key] = value;
+    
+    // ST generally requires an explicit save after modifying metadata
+    if (typeof window.saveChatDebounced === 'function') {
+        window.saveChatDebounced();
+    }
+    return true;
+}
+
 // Start monitoring
 initChatPersistence();
 
