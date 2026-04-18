@@ -1,3 +1,36 @@
+// 1. Change your import to rename the core functions:
+import { 
+    getSettings as getGlobalSettings, 
+    saveSettings as saveGlobalSettings, 
+    getChatState, 
+    saveChatState 
+} from './core.js';
+
+// 2. Create local proxy functions that merge chat data:
+function getSettings() {
+    const s = getGlobalSettings();
+    // Override global RPG state with chat-local state
+    s.phone = getChatState('phone', s.phone || {});
+    s.social = getChatState('social', s.social || {});
+    s.worldState = getChatState('worldState', s.worldState || {});
+    s.files = getChatState('files', s.files || {});
+    return s;
+}
+
+function saveSettings() {
+    // Intercept the save and route RPG data to the chat
+    // We use getGlobalSettings() here to check the current in-memory object
+    const s = getGlobalSettings(); 
+    
+    if (s.phone) saveChatState('phone', s.phone);
+    if (s.social) saveChatState('social', s.social);
+    if (s.worldState) saveChatState('worldState', s.worldState);
+    if (s.files) saveChatState('files', s.files);
+    
+    // Still save globals (like extension UI preferences)
+    saveGlobalSettings();
+}
+
 import { getSettings, saveSettings, getChatState, saveChatState, /* ... */ } from './core.js';
 import { generateContent } from "./apiClient.js";
 import { getContext } from "../../../../../extensions.js";
