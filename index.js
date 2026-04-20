@@ -290,13 +290,13 @@ jQuery(async () => {
     }
 }
 
-    // Listen for new messages
+        // Listen for new messages
     window.eventSource.on('characterMessageRendered', onMessageReceived);
 
     console.log("[UIE] Ready.");
+
     } catch (e) {
         console.error("[UIE] Critical Initialization Error:", e);
-        markInitError("critical", e);
     }
 });
 
