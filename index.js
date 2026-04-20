@@ -290,18 +290,10 @@ jQuery(async () => {
     }
 }
 
-// Listen for new messages
-window.eventSource.on('characterMessageRendered', onMessageReceived);
-                 console.log("[UIE] Chat state listener attached safely!");
-            } else {
-                 console.warn("[UIE] window.eventSource not found. Cannot attach chat state listener.");
-            }
-        } catch (err) {
-            console.error("[UIE] Failed to attach chat state listener:", err);
-        }
+    // Listen for new messages
+    window.eventSource.on('characterMessageRendered', onMessageReceived);
 
-        console.log("[UIE] Ready.");
-
+    console.log("[UIE] Ready.");
     } catch (e) {
         console.error("[UIE] Critical Initialization Error:", e);
         markInitError("critical", e);
