@@ -1,5 +1,3 @@
-import { getContext } from "/scripts/extensions.js";
-
 const EXT_ID = "universal-immersion-engine";
 
 const MIRROR_KEY = "uie_settings_mirror_v1";
