@@ -396,3 +396,39 @@ jQuery(async () => {
         console.error("[UIE] Init Error:", err);
     }
 });
+
+// Load data when extension initializes
+function loadUIEData() {
+  const context = getContext();
+  const metadata = context.chatMetadata || {};
+  const uieData = metadata.uie || {
+    inventory: [],
+    phone: {messages: [], contacts: []},
+    databank: {}
+  };
+  
+  // Populate your UI with this data
+  updateInventoryDisplay(uieData.inventory);
+  updatePhoneDisplay(uieData.phone);
+  return uieData;
+}
+
+// Save data when it changes
+function saveUIEData(newData) {
+  const context = getContext();
+  const metadata = context.chatMetadata || {};
+  metadata.uie = newData;
+  
+  // SillyTavern's internal save (this persists to backend)
+  context.saveChatMetadata(metadata);
+  
+  console.log('UIE data saved to chat metadata');
+}
+
+// Example usage - adding to inventory
+$('#inventory-add-btn').on('click', function() {
+  const currentData = loadUIEData();
+  currentData.inventory.push('New Item');
+  saveUIEData(currentData);
+  updateInventoryDisplay(currentData.inventory);
+});
