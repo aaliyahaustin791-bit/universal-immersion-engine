@@ -341,6 +341,9 @@ export function initPhone() {
         }
     });
 
+    console.log("[UIE] Phone module initialized");
+} // <-- AND THIS CLOSES initPhone()
+
 // ADD THIS TO HOOK UP THE AUDIO FILTER:
 // Using inline queries so we don't accidentally overwrite your existing variables!
 
