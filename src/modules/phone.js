@@ -1,15 +1,20 @@
-// 1. Change your import to rename the core functions:
+/// --- 1. ALL IMPORTS AT THE VERY TOP ---
 import { 
     getSettings as getGlobalSettings, 
     saveSettings as saveGlobalSettings, 
     getChatState, 
     saveChatState 
 } from './core.js';
+import { generateContent } from "./apiClient.js";
+import { getContext } from "../../../../../extensions.js";
+import { injectRpEvent } from "./features/rp_log.js";
+import { notify } from "./notifications.js";
+import { checkAndGenerateImage } from "./imageGen.js";
+import { applyI18n } from "./i18n.js";
 
-// 2. Create local proxy functions that merge chat data:
+// --- 2. LOCAL PROXY FUNCTIONS ---
 function getSettings() {
     const s = getGlobalSettings();
-    // Override global RPG state with chat-local state
     s.phone = getChatState('phone', s.phone || {});
     s.social = getChatState('social', s.social || {});
     s.worldState = getChatState('worldState', s.worldState || {});
@@ -18,35 +23,56 @@ function getSettings() {
 }
 
 function saveSettings() {
-    // Intercept the save and route RPG data to the chat
-    // We use getGlobalSettings() here to check the current in-memory object
     const s = getGlobalSettings(); 
-    
     if (s.phone) saveChatState('phone', s.phone);
     if (s.social) saveChatState('social', s.social);
     if (s.worldState) saveChatState('worldState', s.worldState);
     if (s.files) saveChatState('files', s.files);
-    
-    // Still save globals (like extension UI preferences)
     saveGlobalSettings();
 }
 
-import { getSettings, saveSettings, getChatState, saveChatState, /* ... */ } from './core.js';
-import { generateContent } from "./apiClient.js";
-import { getContext } from "../../../../../extensions.js";
-import { injectRpEvent } from "./features/rp_log.js";
-import { notify } from "./notifications.js";
-import { checkAndGenerateImage } from "./imageGen.js";
-import { applyI18n } from "./i18n.js";
-
+// --- 3. GLOBAL VARIABLES ---
 let callTimerInt = null;
-let activeContact = null; // Tracks who we are texting
+let activeContact = null;
 let dialBuf = "";
 let chatClock = null;
 let phoneClockInt = null;
 let arrivalObserver = null;
 let arrivalLastMesId = null;
 let callChatContext = "";
+
+// --- 4. EXPORTED INIT FUNCTION ---
+export async function initPhone() {
+    const $win = $("#uie-phone-window");
+    if (!$win.length) return;
+    
+    $win.off("click.phone change.phone input.phone keypress.phone");
+    $(document).off("click.phone change.phone input.phone keypress.phone");
+
+    // BIND OPEN BUTTON
+    $(document).off("click", "#btn-phn").on("click", "#btn-phn", () => {
+        const $p = $("#uie-phone-window");
+        const wasVisible = $p.is(":visible");
+        $p.fadeToggle(200);
+        if (!wasVisible) {
+            try {
+                if (typeof updateClock === "function") updateClock();
+                if (phoneClockInt) clearInterval(phoneClockInt);
+                phoneClockInt = setInterval(updateClock, 15000);
+            } catch (_) {}
+            try { window.UIE_navPush?.("win:#uie-phone-window"); } catch (_) {}
+        } else {
+            try {
+                if (phoneClockInt) clearInterval(phoneClockInt);
+                phoneClockInt = null;
+            } catch (_) {}
+            try { window.UIE_navPop?.(); } catch (_) {}
+        }
+    });
+
+    console.log("[UIE] Phone module initialized");
+    // ... any other phone initialization code goes here ...
+}
 
 function isInactiveChatMesNode(m) {
     try {
