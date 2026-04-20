@@ -6,7 +6,6 @@ import {
     saveChatState 
 } from './core.js';
 import { generateContent } from "./apiClient.js";
-import { getContext } from "../../../../../extensions.js";
 import { injectRpEvent } from "./features/rp_log.js";
 import { notify } from "./notifications.js";
 import { checkAndGenerateImage } from "./imageGen.js";
