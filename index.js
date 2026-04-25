@@ -253,8 +253,11 @@ jQuery(async () => {
                          stateManager.migrateLegacyData();
                          const localData = stateManager.getChatData();
                          
+                         if (window.UIE && window.UIE.Phone) {
+                             if (window.UIE.Phone.clearState) window.UIE.Phone.clearState();
+                             if (window.UIE.Phone.loadData) window.UIE.Phone.loadData(localData.phone);
+                         }
                          if (window.UIE) {
-                             if (window.UIE.Phone?.loadData) window.UIE.Phone.loadData(localData.phone);
                              if (window.UIE.Inventory?.loadData) window.UIE.Inventory.loadData(localData.inventory);
                              if (window.UIE.Databank?.loadData) window.UIE.Databank.loadData(localData.databank);
                          }

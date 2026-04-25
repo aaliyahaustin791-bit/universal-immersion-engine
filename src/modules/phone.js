@@ -313,7 +313,51 @@ function syncToMainChat(actionDescription) {
     } catch (_) {}
 }
 
-export function initPhone() {
+export async function initPhone() {
+    const StateManagerMod = await import(`./StateManager.js?v=${window.UIE_BUILD || ''}`);
+    window.StateManager = StateManagerMod;
+    window.UIE.Phone = {
+        clearState: function() {
+            activeContact = null;
+            dialBuf = '';
+            const s = getSettings();
+            if (s.phone) {
+                s.phone.smsThreads = {};
+                s.phone.arrivals = [];
+                s.phone.blockedContacts = [];
+                // Reset dynamic data only; preserve user settings like pin, bg, customApps, etc.
+            }
+            // Reset UI to safe state
+            try {
+                $('#dial-display').text('—');
+                $('#msg-contact-name').text('Messages');
+                $('#uie-phone-homescreen').show();
+                $('.phone-app-window').hide();
+            } catch (_) {}
+        },
+        loadData: function(phoneData) {
+            const s = getSettings();
+            const defaultPhone = {
+                bg: "", lockBg: "", pin: "", deviceSkin: "classic", unlockedDevices: ["classic"],
+                customApps: [], bookmarks: [], browser: { pages: {}, history: [], index: -1 },
+                numberBook: [], smsThreads: {}, arrivals: [], blockedContacts: []
+            };
+            s.phone = phoneData ? Object.assign({}, defaultPhone, phoneData) : defaultPhone;
+            // Re-render if phone is open
+            if ($('#uie-phone-window').is(':visible')) {
+                loadPhoneVisuals();
+                goHome(); // or current render functions
+            }
+        },
+        saveData: function() {
+            const s = getSettings();
+            const data = window.StateManager.getChatData();
+            data.phone = s.phone;
+            window.StateManager.saveChatData(data);
+        }
+    };
+    const $win = $("#uie-phone-window");
+    if (!$win.length) return;
     const $win = $("#uie-phone-window");
     if (!$win.length) return;
     $win.off("click.phone change.phone input.phone keypress.phone");
