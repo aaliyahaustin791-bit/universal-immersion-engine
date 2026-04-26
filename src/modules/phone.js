@@ -199,7 +199,7 @@ function getSocialMemoryBlockForName(targetName, maxItems = 8) {
 
 function getCharacterCardBlock(maxLen = 2200) {
     try {
-        const ctx = window.SillyTavern?.getContext?.() || {};
+        const ctx = safeGetContext?.() || {};
         const candidate =
             ctx?.character ||
             ctx?.char ||
