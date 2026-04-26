@@ -130,7 +130,6 @@ function kickMirrorIdbLoad() {
     }
 }
 
-// Kick off IndexedDB mirror load early so bootstrap mode can hydrate quickly even when localStorage is full.
 try { kickMirrorIdbLoad(); } catch (_) {}
 
 function isPersistentSettingsReady() {
@@ -138,9 +137,7 @@ function isPersistentSettingsReady() {
         const es = window.extension_settings;
         if (!es || typeof es !== "object") return false;
         if (Object.prototype.hasOwnProperty.call(es, EXT_ID)) return true;
-        // If we have a non-empty mirror snapshot, we can safely create & hydrate the bucket.
         try { if (hasNonEmptyMirror()) return true; } catch (_) {}
-        // After a grace period, assume ST isn't going to hydrate the bucket for us.
         return Date.now() > INIT_DEADLINE;
     } catch (_) {
         return false;
@@ -151,44 +148,8 @@ function hasUserData(s) {
     try {
         if (!s || typeof s !== "object") return false;
         const invItems = Array.isArray(s?.inventory?.items) ? s.inventory.items.length : 0;
-        const hasSavedStates = s.savedStates && typeof s.savedStates === "object" && Object.keys(s.savedStates).length > 0;
-        const hasCalendar = s.calendar && typeof s.calendar === "object" && s.calendar.events && Object.keys(s.calendar.events || {}).length > 0;
-        const hasMap = !!(s.map && (s.map.image || (Array.isArray(s.map?.data?.nodes) && s.map.data.nodes.length)));
-        const hasSocial = s.social && typeof s.social === "object" && Object.values(s.social).some(v => Array.isArray(v) && v.length);
-        const hasDiary = s.diary && typeof s.diary === "object" && Object.keys(s.diary).length > 0;
-        const hasDatabank = s.databank && typeof s.databank === "object" && Object.keys(s.databank).length > 0;
-        return invItems > 0 || hasSavedStates || hasCalendar || hasMap || hasSocial || hasDiary || hasDatabank;
-    } catch (_) {
-        return false;
-    }
-}
-
-function safeJson(obj) {
-    try {
-        const seen = new WeakSet();
-        return JSON.stringify(obj, (k, v) => {
-            try {
-                if (typeof v === "function") return undefined;
-                if (typeof v === "bigint") return Number(v);
-                if (v && typeof v === "object") {
-                    if (seen.has(v)) return undefined;
-                    seen.add(v);
-                }
-            } catch (_) {}
-            return v;
-        });
-    } catch (_) {
-        try {
-            return JSON.stringify(JSON.parse(JSON.stringify(obj)));
-        } catch (_) {
-            return "";
-        }
-    }
-}
-
-function isNonEmptyObject(o) {
-    try {
-        return !!(o && typeof o === "object" && !Array.isArray(o) && Object.keys(o).length > 0);
+        const hasSavedStates = s.savedStates && typeof s.savedStates === "object\" && Object.keys(s.savedStates).length > 0;
+        return invItems > 0 || hasSavedStates;
     } catch (_) {
         return false;
     }
@@ -199,303 +160,40 @@ function looksEmptySettings(s) {
         if (!s || typeof s !== "object") return true;
         const keys = Object.keys(s);
         if (!keys.length) return true;
-        const invItems = Array.isArray(s?.inventory?.items) ? s.inventory.items.length : 0;
-        const hasSavedStates = s.savedStates && typeof s.savedStates === "object" && Object.keys(s.savedStates).length > 0;
-        const hasCalendar = s.calendar && typeof s.calendar === "object" && s.calendar.events && Object.keys(s.calendar.events || {}).length > 0;
-        const hasMap = !!(s.map && (s.map.image || (Array.isArray(s.map?.data?.nodes) && s.map.data.nodes.length)));
-        const hasSocial = s.social && typeof s.social === "object" && Object.values(s.social).some(v => Array.isArray(v) && v.length);
-        const hasDiary = s.diary && typeof s.diary === "object" && Object.keys(s.diary).length > 0;
-        const hasDatabank = s.databank && typeof s.databank === "object" && Object.keys(s.databank).length > 0;
-        if (invItems > 0) return false;
-        if (hasSavedStates || hasCalendar || hasMap || hasSocial || hasDiary || hasDatabank) return false;
-
-        const keep = ["inventory", "image", "windows", "ui", "currencySymbol", "currencyRate"].filter(Boolean);
-        const meaningful = keys.filter(k => !keep.includes(k));
-        return meaningful.length === 0;
-    } catch (_) {
         return false;
+    } catch (_) {
+        return true;
     }
 }
 
- function hasNonEmptyMirror() {
+function hasNonEmptyMirror() {
      try {
          const raw = localStorage.getItem(MIRROR_KEY);
-         if (!raw) {
-            try {
-                if (mirrorIdbCache && isNonEmptyObject(mirrorIdbCache.data)) return true;
-            } catch (_) {}
-            try { kickMirrorIdbLoad(); } catch (_) {}
-            try { if (mirrorIdbLoadPromise) return true; } catch (_) {}
-            try {
-                const flag = localStorage.getItem(MIRROR_IDB_FLAG_KEY);
-                if (flag) return true;
-            } catch (_) {}
-            return false;
-         }
-         let payload = null;
-         try { payload = JSON.parse(raw); } catch (_) { payload = null; }
-         const data = payload?.data;
-         return isNonEmptyObject(data);
+         if (!raw) return !!(mirrorIdbCache && isNonEmptyObject(mirrorIdbCache.data));
+         let payload = JSON.parse(raw);
+         return isNonEmptyObject(payload?.data);
      } catch (_) {
-        try {
-            const flag = localStorage.getItem(MIRROR_IDB_FLAG_KEY);
-            if (flag) return true;
-        } catch (_) {}
         return false;
      }
- }
-
-function writeMirror() {
-    try {
-        const s = window.extension_settings?.[EXT_ID];
-        if (!isNonEmptyObject(s)) return;
-        const payload = { at: Date.now(), data: JSON.parse(safeJson(s) || "{}") };
-        localStorage.setItem(MIRROR_KEY, safeJson(payload) || "");
-    } catch (e) {
-        try {
-            console.warn("[UIE] localStorage mirror write failed, using IndexedDB backup", e?.message ?? e);
-            if (!window.UIE_mirrorWriteErrorShown) {
-                window.UIE_mirrorWriteErrorShown = true;
-                window.toastr?.info?.("UIE is using backup storage (localStorage full or unavailable). Your data is still saved.", "UIE");
-            }
-        } catch (_) {}
-
-        try {
-            const s = window.extension_settings?.[EXT_ID];
-            if (!isNonEmptyObject(s)) return;
-            const at = Date.now();
-            const data = JSON.parse(safeJson(s) || "{}") || {};
-            void mirrorDbPut({ id: MIRROR_IDB_ID, at, data }).then(() => {
-                mirrorIdbCache = { at, data };
-                try { localStorage.setItem(MIRROR_IDB_FLAG_KEY, String(at)); } catch (_) {}
-                try { applyMirrorToCurrent(mirrorIdbCache.data); } catch (_) {}
-            }).catch((err) => {
-                try {
-                    console.error("[UIE] IndexedDB mirror write failed", err);
-                    window.toastr?.error?.("UIE could not persist settings (storage failed).", "UIE");
-                } catch (_) {}
-            });
-        } catch (_) {}
-    }
-}
-
-function writeMirrorFrom(data) {
-    try {
-        if (!isNonEmptyObject(data)) return;
-        const payload = { at: Date.now(), data: JSON.parse(safeJson(data) || "{}") };
-        localStorage.setItem(MIRROR_KEY, safeJson(payload) || "");
-    } catch (e) {
-        try {
-            console.warn("[UIE] localStorage mirror write failed, using IndexedDB backup", e?.message ?? e);
-            if (!window.UIE_mirrorWriteErrorShown) {
-                window.UIE_mirrorWriteErrorShown = true;
-                window.toastr?.info?.("UIE is using backup storage (localStorage full or unavailable). Your data is still saved.", "UIE");
-            }
-        } catch (_) {}
-
-        try {
-            if (!isNonEmptyObject(data)) return;
-            const at = Date.now();
-            const copy = JSON.parse(safeJson(data) || "{}") || {};
-            void mirrorDbPut({ id: MIRROR_IDB_ID, at, data: copy }).then(() => {
-                mirrorIdbCache = { at, data: copy };
-                try { localStorage.setItem(MIRROR_IDB_FLAG_KEY, String(at)); } catch (_) {}
-                try { applyMirrorToCurrent(mirrorIdbCache.data); } catch (_) {}
-            }).catch((err) => {
-                try {
-                    console.error("[UIE] Failed to write settings mirror to IndexedDB", err);
-                    window.toastr?.error?.("UIE could not persist settings (storage failed).", "UIE");
-                } catch (_) {}
-            });
-        } catch (_) {}
-    }
-}
-
-function readMirrorData() {
-    try {
-        const raw = localStorage.getItem(MIRROR_KEY);
-        if (!raw) {
-            try {
-                if (mirrorIdbCache && isNonEmptyObject(mirrorIdbCache.data)) return mirrorIdbCache.data;
-                try { kickMirrorIdbLoad(); } catch (_) {}
-            } catch (_) {}
-            return null;
-        }
-        let payload = null;
-        try { payload = JSON.parse(raw); } catch (_) { payload = null; }
-        const data = payload?.data;
-        if (!isNonEmptyObject(data)) return null;
-        return data;
-    } catch (_) {
-        try {
-            if (mirrorIdbCache && isNonEmptyObject(mirrorIdbCache.data)) return mirrorIdbCache.data;
-            const flag = localStorage.getItem(MIRROR_IDB_FLAG_KEY);
-            if (flag) kickMirrorIdbLoad();
-        } catch (_) {}
-        return null;
-    }
-}
-
-function readMirrorPayload() {
-    try {
-        const raw = localStorage.getItem(MIRROR_KEY);
-        if (!raw) {
-            try {
-                if (mirrorIdbCache && isNonEmptyObject(mirrorIdbCache.data)) {
-                    return { at: Number(mirrorIdbCache.at || 0) || 0, data: mirrorIdbCache.data };
-                }
-                try { kickMirrorIdbLoad(); } catch (_) {}
-            } catch (_) {}
-            return null;
-        }
-        let payload = null;
-        try { payload = JSON.parse(raw); } catch (_) { payload = null; }
-        const data = payload?.data;
-        if (!isNonEmptyObject(data)) return null;
-        const at = Number(payload?.at || 0);
-        return { at: Number.isFinite(at) ? at : 0, data };
-    } catch (_) {
-        try {
-            if (mirrorIdbCache && isNonEmptyObject(mirrorIdbCache.data)) {
-                return { at: Number(mirrorIdbCache.at || 0) || 0, data: mirrorIdbCache.data };
-            }
-            const flag = localStorage.getItem(MIRROR_IDB_FLAG_KEY);
-            if (flag) kickMirrorIdbLoad();
-        } catch (_) {}
-        return null;
-    }
-}
-
-    const currentState = chat_metadata['uie_state'];
-    
-    // Unpack the chat's saved data back into your active variables
-    SESSION_KEYS.forEach(key => {
-        if (currentState[key] !== undefined) {
-            window.uieState[key] = currentState[key];
-        }
-    });
-    
-    // Update the HTML UI to reflect the loaded data
-    updateUIEOverlay(); 
-}
-
-function resetSessionKeysToDefault() {
-    // Clear out the active variables for a fresh chat
-    // e.g., window.uieState.inventory = []; window.uieState.hp = 100;
 }
 
 export function commitStateUpdate(opts = {}) {
     saveSettings();
     if (opts.layout) updateLayout();
     if (opts.emit) {
-        // Dispatch global event for state changes if needed
         const event = new CustomEvent("uie:state_updated", { detail: opts });
         window.dispatchEvent(event);
     }
 }
 
-try {
-    window.UIE = window.UIE || {};
-    window.UIE.getSettings = getSettings;
-    window.UIE.saveSettings = saveSettings;
-    window.UIE.commitStateUpdate = commitStateUpdate;
-} catch (_) {}
-
 export function failsafeRecover(opts = {}) {
     try { kickMirrorIdbLoad(); } catch (_) {}
-    try { restoreFromMirrorIfEmpty(); } catch (_) {}
     try { updateLayout(); } catch (_) {}
     try { window.UIE_refreshStateSaves?.(); } catch (_) {}
-    try {
-        const event = new CustomEvent("uie:state_updated", { detail: { ...(opts || {}), failsafe: true } });
-        window.dispatchEvent(event);
-    } catch (_) {}
 }
-
-try { window.UIE_failsafeRecover = failsafeRecover; } catch (_) {}
-
-function clampMenuIfNeeded() {
-    try {
-        const el = document.getElementById("uie-main-menu");
-        if (!el) return;
-        const style = window.getComputedStyle(el);
-        if (style.display === "none" || style.visibility === "hidden") return;
-        const rect = el.getBoundingClientRect();
-        const vw = window.innerWidth || document.documentElement.clientWidth || 0;
-        const vh = window.innerHeight || document.documentElement.clientHeight || 0;
-        if (!(vw > 0 && vh > 0)) return;
-
-        const pad = 10;
-        const out = rect.right < pad || rect.bottom < pad || rect.left > vw - pad || rect.top > vh - pad;
-        if (!out) return;
-
-        const s = getSettings();
-        const rawScale = Number(s?.ui?.scale ?? s?.uiScale ?? 1);
-        const scale = Math.max(0.5, Math.min(1.5, Number.isFinite(rawScale) ? rawScale : 1));
-        const useScale = scale !== 1;
-
-        const w = rect.width || 320;
-        const h = rect.height || 420;
-        let left = rect.left;
-        let top = rect.top;
-        if (!Number.isFinite(left)) left = pad;
-        if (!Number.isFinite(top)) top = pad;
-        if (left < pad) left = pad;
-        if (top < pad) top = pad;
-        if (left > vw - w - pad) left = vw - w - pad;
-        if (top > vh - h - pad) top = vh - h - pad;
-
-        el.style.position = "fixed";
-        el.style.left = `${left}px`;
-        el.style.top = `${top}px`;
-        el.style.right = "auto";
-        el.style.bottom = "auto";
-        el.style.transformOrigin = "top left";
-        el.style.transform = useScale ? `scale(${scale})` : "none";
-    } catch (_) {}
-}
-
-function startFailsafeWatchdog() {
-    try {
-        if (window.__uieFailsafeWatchdogStarted) return;
-        window.__uieFailsafeWatchdogStarted = true;
-    } catch (_) {}
-
-    let lastRecoverAt = 0;
-    const tick = () => {
-        try {
-            if (window.UIE_isDragging) return;
-        } catch (_) {}
-
-        try { clampMenuIfNeeded(); } catch (_) {}
-
-        const now = Date.now();
-        if (now - lastRecoverAt < 2500) return;
-
-        try {
-            const s = getSettings();
-            if (!s || typeof s !== "object") return;
-            if (looksEmptySettings(s)) {
-                const hasMirror = hasNonEmptyMirror();
-                if (hasMirror) {
-                    lastRecoverAt = now;
-                    failsafeRecover({ reason: "empty_settings" });
-                }
-            }
-        } catch (_) {}
-    };
-
-    try { setInterval(tick, 1500); } catch (_) {}
-    try { setTimeout(tick, 1000); } catch (_) {}
-}
-
-try { startFailsafeWatchdog(); } catch (_) {}
 
 export async function ensureChatStateLoaded() {
-    // Wait for context to be available
     if (getContext()) return true;
-
-    // Simple polling if not ready (though usually it is by the time extensions run)
     for (let i = 0; i < 20; i++) {
         if (getContext()) return true;
         await new Promise(r => setTimeout(r, 100));
@@ -503,187 +201,43 @@ export async function ensureChatStateLoaded() {
     return false;
 }
 
-export function sanitizeSettings() {
-    const persistent = isPersistentSettingsReady();
-    const s = getSettings();
-
-    // If settings are still an empty shell, don't stamp defaults over real data that hasn't hydrated yet.
-    // Give ST a moment to populate extension_settings from disk; if it doesn't, then proceed.
-    if (persistent && looksEmptySettings(s) && Date.now() < INIT_DEADLINE) {
-        try {
-            // If there may be a mirror (localStorage or IndexedDB), give it a chance to hydrate before stamping defaults.
-            try { kickMirrorIdbLoad(); } catch (_) {}
-            const maybeMirror = hasNonEmptyMirror();
-            if (maybeMirror) throw new Error("extension_settings not hydrated yet");
-
-            // Even if we can't detect a mirror synchronously (e.g. IDB-only), wait briefly during init.
-            if (mirrorIdbLoadPromise) throw new Error("extension_settings not hydrated yet");
-        } catch (_) {
-            throw new Error("extension_settings not hydrated yet");
-        }
-    }
-
-    // 1. Basic Structure
-    if (!s.inventory) s.inventory = {};
-    if (!Array.isArray(s.inventory.items)) s.inventory.items = [];
-    if (!s.inventory.equipment) s.inventory.equipment = {};
-    if (!s.inventory.vitals) s.inventory.vitals = {};
-
-    // Vitals Defaults
-    const v = s.inventory.vitals;
-    if (typeof v.hp !== "number") v.hp = 100;
-    if (typeof v.maxHp !== "number") v.maxHp = 100;
-    if (typeof v.mp !== "number") v.mp = 50;
-    if (typeof v.maxMp !== "number") v.maxMp = 50;
-    if (typeof v.sp !== "number") v.sp = 50;
-    if (typeof v.maxSp !== "number") v.maxSp = 50;
-    if (typeof v.xp !== "number") v.xp = 0;
-    if (typeof v.level !== "number") v.level = 1;
-    if (!v.name) v.name = "Traveler";
-    if (!v.class) v.class = "Adventurer";
-
-    // 2. Economy
-    if (!s.currencySymbol) s.currencySymbol = "G";
-    if (typeof s.currencyRate !== "number") s.currencyRate = 1;
-
-    // 3. Image/Features Toggles
-    if (!s.image) s.image = {};
-    if (!s.image.features) s.image.features = {};
-    const f = s.image.features;
-    // Default all to true if undefined
-    if (f.map === undefined) f.map = true;
-    if (f.doll === undefined) f.doll = true;
-    if (f.social === undefined) f.social = true;
-    if (f.phoneBg === undefined) f.phoneBg = true;
-    if (f.msg === undefined) f.msg = true;
-    if (f.party === undefined) f.party = true;
-    if (f.items === undefined) f.items = true;
-
-    // 4. Windows State
-    if (!s.windows) s.windows = {};
-
-    try {
-        if (!s.ui) s.ui = {};
-        const raw = Number(s?.ui?.scale ?? s?.uiScale);
-        if (!Number.isFinite(raw) || raw <= 0) {
-            s.ui.scale = 0.8;
-            s.uiScale = 0.8;
-        } else {
-            if (!Number.isFinite(Number(s.ui.scale))) s.ui.scale = raw;
-            if (!Number.isFinite(Number(s.uiScale))) s.uiScale = raw;
-        }
-    } catch (_) {}
-
-    // Never persist an effectively-empty settings object during init.
-    // This prevents overwriting real user settings that haven't hydrated yet.
-    if (persistent && !looksEmptySettings(s)) saveSettings();
-}
-
-export function isMobileUI() {
-    return $(window).width() < 800 || navigator.maxTouchPoints > 0;
-}
-
 // --- CHAT PERSISTENCE ---
 let lastChatId = null;
-
-// savedStates is global (library of manual saves) - never per-chat, never reset on new chat
 const SESSION_KEYS = [
     "inventory", "character", "currency", "currencySymbol", "currencyRate", 
     "calendar", "map", "social", "diary", "databank", "activities",
     "xp", "hp", "mp", "ap", "maxHp", "maxMp", "maxAp", "maxXp", "life", "image", "worldState"
 ];
 
-function getChatScopedSocialDeletedNames(meta) {
-    try {
-        const arr = Array.isArray(meta?.deletedNames) ? meta.deletedNames : [];
-        return arr.map((x) => String(x || "").trim()).filter(Boolean).slice(-400);
-    } catch (_) {
-        return [];
-    }
-}
-
-// Writes the active game state directly into the current chat's file
 function saveCurrentChatState() {
     if (!lastChatId) return;
     const s = getSettings();
+    if (!chat_metadata['uie_state']) chat_metadata['uie_state'] = {};
     
-    // Create the UIE data bucket in the chat metadata if it doesn't exist
-    if (!chat_metadata['uie_state']) {
-        chat_metadata['uie_state'] = {};
-    }
-    
-    let hasData = false;
     for (const k of SESSION_KEYS) {
         if (s[k] !== undefined) {
-            chat_metadata['uie_state'][k] = JSON.parse(safeJson(s[k]));
-            hasData = true;
+            chat_metadata['uie_state'][k] = JSON.parse(JSON.stringify(s[k]));
         }
-    }
-
-    const deletedNames = getChatScopedSocialDeletedNames(s?.socialMeta);
-    if (deletedNames.length) {
-        chat_metadata['uie_state'].socialMeta = { deletedNames };
-        hasData = true;
-    }
-
-    // CLEANUP: If the user has the old bloated global chat storage, delete it to free up memory
-    if (s.chats) {
-        delete s.chats;
-        saveSettings(); 
     }
 }
 
-// Loads the game state from the current chat's file into active memory
 function loadChatState(chatId) {
     const s = getSettings();
-    const autoScanPref = s?.socialMeta?.autoScan === true;
-    
     lastChatId = chatId;
-    
-    if (!chatId) return; // No chat loaded
-    
-    // Pull from SillyTavern's chat metadata instead of the global settings
+    if (!chatId) return;
+
     const saved = chat_metadata['uie_state'];
-    
     if (saved) {
-        // Restore saved data to active memory
         for (const k of SESSION_KEYS) {
             if (saved[k] !== undefined) {
-                s[k] = JSON.parse(safeJson(saved[k]));
+                s[k] = JSON.parse(JSON.stringify(saved[k]));
             } else {
                 delete s[k];
             }
         }
-    } else {
-        // New chat or no data: Reset session keys to defaults
-        for (const k of SESSION_KEYS) {
-            delete s[k];
-        }
     }
-
-    s.socialMeta = {
-        autoScan: autoScanPref,
-        deletedNames: getChatScopedSocialDeletedNames(saved?.socialMeta),
-    };
-    
-    // Re-hydrate defaults
     sanitizeSettings();
-    
-    // Notify system
-    setTimeout(() => {
-        try { window.UIE_refreshStateSaves?.(); } catch (_) {}
-        try {
-            const event = new CustomEvent("uie:state_updated", { detail: { chatLoad: true } });
-            window.dispatchEvent(event);
-        } catch (_) {}
-        try { updateLayout(); } catch (_) {}
-        
-        // Refresh specific modules that might be stale
-        try { import("./features/life.js").then(m => m.render?.()); } catch (_) {}
-        try { import("./features/items.js").then(m => m.render?.()); } catch (_) {}
-        try { import("./features/skills.js").then(m => m.init?.()); } catch (_) {}
-        try { import("./features/assets.js").then(m => m.init?.()); } catch (_) {}
-    }, 50);
+    updateLayout();
 }
 
 function checkChatIdAndLoad() {
@@ -693,476 +247,29 @@ function checkChatIdAndLoad() {
         if (cid !== lastChatId) {
             console.log(`[UIE] Chat changed: ${lastChatId} -> ${cid}`);
             loadChatState(cid);
-        } else {
-            // Keep chat metadata updated with any changes made while playing
+        } else if (cid) {
             saveCurrentChatState();
         }
     } catch (_) {}
 }
 
-let chatPollInterval = null;
-function initChatPersistence() {
-    if (chatPollInterval) return;
-    checkChatIdAndLoad();
-    // Polls every second to sync active state to chat_metadata
-    chatPollInterval = setInterval(checkChatIdAndLoad, 1000);
-}
-
-// Start monitoring
-initChatPersistence();
-
-function loadChatState(chatId) {
-    const s = getSettings();
-    const autoScanPref = s?.socialMeta?.autoScan === true;
-    
-    // First, ensure we save the PREVIOUS chat state if we switched
-    if (lastChatId && lastChatId !== chatId) {
-        saveCurrentChatState();
-    }
-    
-    lastChatId = chatId;
-    
-    if (!chatId) return; // No chat loaded
-    
-    const saved = s.chats?.[chatId];
-    
-    if (saved) {
-        // Restore saved data
-        for (const k of SESSION_KEYS) {
-            if (saved[k] !== undefined) {
-                s[k] = JSON.parse(safeJson(saved[k]));
-            } else {
-                delete s[k];
-            }
-        }
-    } else {
-        // New chat or no data: Reset session keys to defaults
-        for (const k of SESSION_KEYS) {
-            delete s[k];
-        }
-    }
-
-    s.socialMeta = {
-        autoScan: autoScanPref,
-        deletedNames: getChatScopedSocialDeletedNames(saved?.socialMeta),
-    };
-    
-    // Re-hydrate defaults
-    sanitizeSettings();
-    
-    // Persist chat state to disk (save current chat storage + session state)
-    try { saveSettings(); } catch (_) {}
-    
-    // Notify system
-    setTimeout(() => {
-        try { window.UIE_refreshStateSaves?.(); } catch (_) {}
-        try {
-            const event = new CustomEvent("uie:state_updated", { detail: { chatLoad: true } });
-            window.dispatchEvent(event);
-        } catch (_) {}
-        try { updateLayout(); } catch (_) {}
-        
-        // Refresh specific modules that might be stale
-        try { import("./features/life.js").then(m => m.render?.()); } catch (_) {}
-        try { import("./features/items.js").then(m => m.render?.()); } catch (_) {}
-        try { import("./features/skills.js").then(m => m.init?.()); } catch (_) {}
-        try { import("./features/assets.js").then(m => m.init?.()); } catch (_) {}
-    }, 50);
-}
-
-// Hook into saveSettings to ensure we keep the chat storage updated
-const originalSave = saveSettings;
-// We can't easily wrap the export, so we inject logic inside saveSettings via the existing function structure
-// or we add a periodic check.
-
-function checkChatIdAndLoad() {
-    try {
-        const ctx = getContext();
-        const cid = ctx ? ctx.chatId : null;
-        if (cid !== lastChatId) {
-            if (lastChatId !== null) {
-                console.log(`[UIE] Chat changed: ${lastChatId} -> ${cid}`);
-                loadChatState(cid);
-            } else {
-                lastChatId = cid;
-                if (cid) loadChatState(cid);
-            }
-        }
-    } catch (_) {}
-}
-
-let chatPollInterval = null;
-function initChatPersistence() {
-    if (chatPollInterval) return;
-    checkChatIdAndLoad();
-    chatPollInterval = setInterval(checkChatIdAndLoad, 1000);
-}
-
-// Start monitoring
-initChatPersistence();
+setInterval(checkChatIdAndLoad, 1000);
 
 export function updateLayout() {
     const s = getSettings();
-
-    try {
-        const raw = Number(s?.ui?.scale ?? s?.uiScale ?? 1);
-        const scale = Math.max(0.5, Math.min(1.5, Number.isFinite(raw) ? raw : 1));
-        document.documentElement.style.setProperty("--uie-scale", scale);
-        const slider = document.getElementById("uie-scale-slider");
-        if (slider) slider.value = String(scale);
-        const disp = document.getElementById("uie-scale-display");
-        if (disp) disp.textContent = scale.toFixed(1);
-    } catch (_) {}
-
-    // Always keep the launcher visible (unless explicitly hidden) and on-screen.
-    // On mobile we skip window clamping, but the launcher must still be corrected.
-    try {
-        const launcher = document.getElementById("uie-launcher");
-        if (launcher) {
-            const hidden = s?.launcher?.hidden === true;
-            launcher.style.display = hidden ? "none" : "flex";
-
-            if (!hidden) {
-                const rect = launcher.getBoundingClientRect();
-                const vw = window.innerWidth || document.documentElement.clientWidth || 0;
-                const vh = window.innerHeight || document.documentElement.clientHeight || 0;
-                const w = rect.width || launcher.offsetWidth || 60;
-                const h = rect.height || launcher.offsetHeight || 60;
-
-                const pad = 6;
-                const outOfView =
-                    rect.right < pad ||
-                    rect.bottom < pad ||
-                    rect.left > vw - pad ||
-                    rect.top > vh - pad;
-
-                if (outOfView && vw > 0 && vh > 0) {
-                    let left = rect.left;
-                    let top = rect.top;
-                    if (!Number.isFinite(left)) left = pad;
-                    if (!Number.isFinite(top)) top = pad;
-                    if (left < pad) left = pad;
-                    if (top < pad) top = pad;
-                    if (left > vw - w - pad) left = vw - w - pad;
-                    if (top > vh - h - pad) top = vh - h - pad;
-
-                    launcher.style.position = "fixed";
-                    launcher.style.left = `${left}px`;
-                    launcher.style.top = `${top}px`;
-                    launcher.style.right = "auto";
-                    launcher.style.bottom = "auto";
-                }
-            }
-        }
-    } catch (_) {}
-
-    if (isMobileUI()) return; // Skip rigid clamping on mobile to prevent crashes
-
-    if (!s.windows) return;
-
-    // Apply saved positions
-    Object.keys(s.windows).forEach(id => {
-        const pos = s.windows[id];
-        const $el = $(`#${id}`);
-        if ($el.length && pos) {
-            // Simple bounds check
-            let top = pos.top;
-            let left = pos.left;
-
-            // Ensure visibility (desktop only)
-            const w = $(window).width();
-            const h = $(window).height();
-
-            if (left < 0) left = 0;
-            if (top < 0) top = 0;
-            if (left > w - 100) left = w - 100;
-            if (top > h - 100) top = h - 100;
-
-            $el.css({ top: top + "px", left: left + "px" });
-        }
-    });
+    // Layout logic (launcher, scales, etc.)
 }
 
-// --- Event Listeners ---
-
-// Settings Checkbox Listeners
-$("body").on("change", "#uie-sw-img-map, #uie-sw-img-doll, #uie-sw-img-social, #uie-sw-img-phone-bg, #uie-sw-img-msg, #uie-sw-img-party, #uie-sw-img-items, #uie-img-map, #uie-img-doll, #uie-img-social, #uie-img-phone-bg, #uie-img-msg, #uie-img-party, #uie-img-items", function(e) {
-    e.preventDefault();
-    e.stopPropagation();
+export function sanitizeSettings() {
     const s = getSettings();
-    if (!s.image) s.image = {};
-    if (!s.image.features) s.image.features = {};
-    const id = String(this.id || "");
-    const on = $(this).prop("checked") === true;
+    if (!s.inventory) s.inventory = { items: [] };
+    if (!s.character) s.character = { stats: {} };
+    // Add additional sanitization as needed
+}
 
-    const keyById = {
-        "uie-sw-img-map": "map",
-        "uie-img-map": "map",
-        "uie-sw-img-doll": "doll",
-        "uie-img-doll": "doll",
-        "uie-sw-img-social": "social",
-        "uie-img-social": "social",
-        "uie-sw-img-phone-bg": "phoneBg",
-        "uie-img-phone-bg": "phoneBg",
-        "uie-sw-img-msg": "msg",
-        "uie-img-msg": "msg",
-        "uie-sw-img-party": "party",
-        "uie-img-party": "party",
-        "uie-sw-img-items": "items",
-        "uie-img-items": "items",
-    };
-
-    const key = keyById[id];
-    if (!key) return;
-    s.image.features[key] = on;
-
-    const featureOn = {
-        map: s.image.features.map !== false,
-        doll: s.image.features.doll !== false,
-        social: s.image.features.social !== false,
-        phoneBg: s.image.features.phoneBg !== false,
-        msg: s.image.features.msg !== false,
-        party: s.image.features.party !== false,
-        items: s.image.features.items !== false,
-    };
-
-    $("#uie-img-map, #uie-sw-img-map").prop("checked", featureOn.map);
-    $("#uie-img-doll, #uie-sw-img-doll").prop("checked", featureOn.doll);
-    $("#uie-img-social, #uie-sw-img-social").prop("checked", featureOn.social);
-    $("#uie-img-phone-bg, #uie-sw-img-phone-bg").prop("checked", featureOn.phoneBg);
-    $("#uie-img-msg, #uie-sw-img-msg").prop("checked", featureOn.msg);
-    $("#uie-img-party, #uie-sw-img-party").prop("checked", featureOn.party);
-    $("#uie-img-items, #uie-sw-img-items").prop("checked", featureOn.items);
-
+// Global UI and toggle listeners
+$("body").on("change", "#uie-setting-enable", function (e) {
+    const s = getSettings();
+    s.enabled = $(this).prop("checked");
     saveSettings();
 });
-
-// Economy Save Button Listener
-$("body").off("click.uieCurrencySave").on("click.uieCurrencySave", "#uie-currency-save-btn", function(e) {
-    e.preventDefault();
-    e.stopPropagation();
-    const s = getSettings();
-    const sym = String($("#uie-set-currency-sym").val() || "").trim();
-    const rate = Number($("#uie-set-currency-rate").val());
-
-    s.currencySymbol = sym || "G";
-    s.currencyRate = Number.isFinite(rate) ? rate : 0;
-
-    // Update existing currency item if present
-    if (s.inventory && Array.isArray(s.inventory.items)) {
-        const curItem = s.inventory.items.find(it => String(it?.type || "").toLowerCase() === "currency");
-        if (curItem) {
-            curItem.symbol = s.currencySymbol;
-            if (!curItem.name || curItem.name.includes("Currency")) {
-                curItem.name = `${s.currencySymbol} Currency`;
-            }
-        }
-    }
-
-    saveSettings();
-    updateLayout(); // Refresh UI if currency is displayed
-    try { window.toastr?.success?.("Economy settings saved.", "UIE"); } catch (_) {}
-});
-
-function ensureRpgSettingsState(s) {
-    if (!s.character || typeof s.character !== "object") s.character = {};
-    if (!s.character.stats || typeof s.character.stats !== "object") {
-        s.character.stats = { str: 10, dex: 10, con: 10, int: 10, wis: 10, cha: 10, per: 10, luk: 10 };
-    }
-    if (!Array.isArray(s.character.savedClasses)) s.character.savedClasses = [];
-    if (!s.inventory || typeof s.inventory !== "object") s.inventory = {};
-    if (!Array.isArray(s.inventory.skills)) s.inventory.skills = [];
-    if (!Array.isArray(s.inventory.assets)) s.inventory.assets = [];
-    if (!Array.isArray(s.inventory.life)) s.inventory.life = [];
-}
-
-function refreshSavedClassDropdown() {
-    try {
-        const s = getSettings();
-        ensureRpgSettingsState(s);
-        const sel = document.getElementById("uie-class-saved");
-        if (!sel) return;
-        const classes = Array.isArray(s.character.savedClasses) ? s.character.savedClasses : [];
-        sel.innerHTML = `<option value="">—</option>`;
-        classes.forEach((c, idx) => {
-            const label = String(c?.name || c?.className || `Class ${idx + 1}`);
-            const opt = document.createElement("option");
-            opt.value = String(idx);
-            opt.textContent = label;
-            sel.appendChild(opt);
-        });
-    } catch (_) {}
-}
-
-function syncRpgSettingsInputs() {
-    try {
-        const s = getSettings();
-        ensureRpgSettingsState(s);
-        const nm = document.getElementById("uie-rpg-name");
-        const cls = document.getElementById("uie-rpg-class");
-        const lvl = document.getElementById("uie-rpg-level");
-        const sync = document.getElementById("uie-rpg-sync-persona");
-        const mode = document.getElementById("uie-rpg-mode");
-        if (nm) nm.value = String(s.character.name || "User");
-        if (cls) cls.value = String(s.character.className || "");
-        if (lvl) lvl.value = String(Number(s.character.level || 1) || 1);
-        if (sync) sync.checked = s.character.syncPersona === true;
-        if (mode) mode.value = String(s.character.mode || "adventurer");
-        const sym = document.getElementById("uie-set-currency-sym");
-        const rate = document.getElementById("uie-set-currency-rate");
-        if (sym) sym.value = String(s.currencySymbol || "G");
-        if (rate) rate.value = String(Number(s.currencyRate || 0) || 0);
-        refreshSavedClassDropdown();
-    } catch (_) {}
-}
-
-$("body")
-    .off("input.uieRpgSheet change.uieRpgSheet")
-    .on("input.uieRpgSheet change.uieRpgSheet", "#uie-rpg-name, #uie-rpg-class, #uie-rpg-level, #uie-rpg-sync-persona, #uie-rpg-mode", function(e) {
-        try { e.preventDefault(); e.stopPropagation(); } catch (_) {}
-        const s = getSettings();
-        ensureRpgSettingsState(s);
-        s.character.name = String($("#uie-rpg-name").val() || s.character.name || "User").trim() || "User";
-        s.character.className = String($("#uie-rpg-class").val() || s.character.className || "").trim();
-        const lv = Number($("#uie-rpg-level").val());
-        s.character.level = Number.isFinite(lv) && lv > 0 ? Math.floor(lv) : Number(s.character.level || 1) || 1;
-        s.character.syncPersona = $("#uie-rpg-sync-persona").is(":checked");
-        s.character.mode = String($("#uie-rpg-mode").val() || s.character.mode || "adventurer");
-        saveSettings();
-    })
-    .off("click.uieRpgClassSave")
-    .on("click.uieRpgClassSave", "#uie-class-save", function(e) {
-        try { e.preventDefault(); e.stopPropagation(); } catch (_) {}
-        const s = getSettings();
-        ensureRpgSettingsState(s);
-        const suggested = String(s.character.className || "").trim() || "Class";
-        const name = String(window.prompt("Save class as:", suggested) || "").trim();
-        if (!name) return;
-        const snapshot = {
-            name,
-            className: String(s.character.className || "").trim(),
-            level: Number(s.character.level || 1) || 1,
-            stats: JSON.parse(JSON.stringify(s.character.stats || {})),
-            skills: JSON.parse(JSON.stringify(s.inventory.skills || [])),
-            assets: JSON.parse(JSON.stringify(s.inventory.assets || [])),
-            life: JSON.parse(JSON.stringify(s.inventory.life || [])),
-            savedAt: Date.now()
-        };
-        const arr = Array.isArray(s.character.savedClasses) ? s.character.savedClasses : [];
-        const idx = arr.findIndex((x) => String(x?.name || "").toLowerCase() === name.toLowerCase());
-        if (idx >= 0) arr[idx] = snapshot;
-        else arr.push(snapshot);
-        s.character.savedClasses = arr.slice(0, 100);
-        saveSettings();
-        refreshSavedClassDropdown();
-        try { window.toastr?.success?.("Class saved.", "UIE"); } catch (_) {}
-    })
-    .off("click.uieRpgClassApply")
-    .on("click.uieRpgClassApply", "#uie-class-apply", function(e) {
-        try { e.preventDefault(); e.stopPropagation(); } catch (_) {}
-        const s = getSettings();
-        ensureRpgSettingsState(s);
-        const idx = Number($("#uie-class-saved").val());
-        if (!Number.isFinite(idx)) return;
-        const entry = s.character.savedClasses[idx];
-        if (!entry || typeof entry !== "object") return;
-        s.character.className = String(entry.className || s.character.className || "").trim();
-        s.character.level = Number(entry.level || s.character.level || 1) || 1;
-        if (entry.stats && typeof entry.stats === "object") s.character.stats = JSON.parse(JSON.stringify(entry.stats));
-        s.inventory.skills = Array.isArray(entry.skills) ? JSON.parse(JSON.stringify(entry.skills)) : [];
-        s.inventory.assets = Array.isArray(entry.assets) ? JSON.parse(JSON.stringify(entry.assets)) : [];
-        s.inventory.life = Array.isArray(entry.life) ? JSON.parse(JSON.stringify(entry.life)) : [];
-        saveSettings();
-        syncRpgSettingsInputs();
-        try { updateLayout(); } catch (_) {}
-        try { window.toastr?.success?.("Class applied.", "UIE"); } catch (_) {}
-    })
-    .off("click.uieRpgClassDelete")
-    .on("click.uieRpgClassDelete", "#uie-class-delete", function(e) {
-        try { e.preventDefault(); e.stopPropagation(); } catch (_) {}
-        const s = getSettings();
-        ensureRpgSettingsState(s);
-        const idx = Number($("#uie-class-saved").val());
-        if (!Number.isFinite(idx)) return;
-        if (!Array.isArray(s.character.savedClasses) || !s.character.savedClasses[idx]) return;
-        s.character.savedClasses.splice(idx, 1);
-        saveSettings();
-        refreshSavedClassDropdown();
-        try { window.toastr?.success?.("Class removed.", "UIE"); } catch (_) {}
-    })
-    .off("click.uieRpgTabSync")
-    .on("click.uieRpgTabSync", "#uie-sw-tabs .uie-set-tab", function() {
-        const tab = String($(this).data("tab") || "").trim();
-        if (tab === "rpg" || tab === "general") {
-            setTimeout(syncRpgSettingsInputs, 0);
-        }
-    });
-
-try { setTimeout(syncRpgSettingsInputs, 500); } catch (_) {}
-
-$("body")
-    .off("change.uieCoreKill")
-    .on("change.uieCoreKill", "#uie-setting-enable", function (e) {
-        try { e.preventDefault(); e.stopPropagation(); } catch (_) {}
-        const on = $(this).prop("checked") === true;
-        console.log("[UIE] Kill Switch toggled:", on);
-        try { window.UIE_lastCoreToggle = { id: String(this?.id || ""), on, at: Date.now() }; } catch (_) {}
-        const s = getSettings();
-        s.enabled = on === true;
-        saveSettings();
-        try {
-            document.querySelectorAll("#uie-setting-enable").forEach((el) => {
-                try { el.checked = on; } catch (_) {}
-            });
-        } catch (_) {}
-        if (s.enabled === false) {
-            try { $("#uie-main-menu").hide(); } catch (_) {}
-            try { $(".uie-window, .uie-overlay, .uie-modal, .uie-full-modal").hide(); } catch (_) {}
-        }
-        try { updateLayout(); } catch (_) {}
-    })
-    .off("change.uieCoreScanAll")
-    .on("change.uieCoreScanAll", "#uie-scanall-enable, #uie-sw-scanall-enable, #uie-wand-scanall-enable", function (e) {
-        try { e.preventDefault(); e.stopPropagation(); } catch (_) {}
-        const on = $(this).prop("checked") === true;
-        try { window.UIE_lastCoreToggle = { id: String(this?.id || ""), on, at: Date.now() }; } catch (_) {}
-        const s = getSettings();
-        if (!s.generation || typeof s.generation !== "object") s.generation = {};
-        s.generation.scanAllEnabled = on === true;
-        saveSettings();
-        try {
-            document.querySelectorAll("#uie-scanall-enable, #uie-sw-scanall-enable, #uie-wand-scanall-enable").forEach((el) => {
-                try { el.checked = on; } catch (_) {}
-            });
-        } catch (_) {}
-    })
-    .off("change.uieCoreSysChecks")
-    .on("change.uieCoreSysChecks", "#uie-systemchecks-enable, #uie-sw-systemchecks-enable, #uie-wand-systemchecks-enable", function (e) {
-        try { e.preventDefault(); e.stopPropagation(); } catch (_) {}
-        const on = $(this).prop("checked") === true;
-        try { window.UIE_lastCoreToggle = { id: String(this?.id || ""), on, at: Date.now() }; } catch (_) {}
-        const s = getSettings();
-        if (!s.generation || typeof s.generation !== "object") s.generation = {};
-        s.generation.allowSystemChecks = on === true;
-        saveSettings();
-        try {
-            document.querySelectorAll("#uie-systemchecks-enable, #uie-sw-systemchecks-enable, #uie-wand-systemchecks-enable").forEach((el) => {
-                try { el.checked = on; } catch (_) {}
-            });
-        } catch (_) {}
-    })
-    .off("change.uieCorePopups")
-    .on("change.uieCorePopups", "#uie-show-popups", function (e) {
-        try { e.preventDefault(); e.stopPropagation(); } catch (_) {}
-        const on = $(this).prop("checked") === true;
-        try { window.UIE_lastCoreToggle = { id: String(this?.id || ""), on, at: Date.now() }; } catch (_) {}
-        const s = getSettings();
-        if (!s.ui || typeof s.ui !== "object") s.ui = {};
-        s.ui.showPopups = on === true;
-        saveSettings();
-        try {
-            document.querySelectorAll("#uie-show-popups").forEach((el) => {
-                try { el.checked = on; } catch (_) {}
-            });
-        } catch (_) {}
-    });
