@@ -671,7 +671,7 @@ function getChatScopedSocialDeletedNames(meta) {
 }
 
 // Writes the active game state directly into the current chat's file
-export function saveCurrentChatState() {
+function saveCurrentChatState() {
     if (!lastChatId) return;
     const s = getSettings();
     
