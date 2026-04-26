@@ -446,7 +446,7 @@ export function getSettings() {
 }
 
 export function saveSettings() {
-    const context = getContext();
+    const context = window.SillyTavern?.getContext?.() || {};
     if (!isPersistentSettingsReady()) {
         bootstrapTouched = true;
         try { if (bootstrapSettings && typeof bootstrapSettings === "object") bootstrapSettings.__uie_saved_at = Date.now(); } catch (_) {}
@@ -503,7 +503,7 @@ export function saveSettings() {
         setTimeout(() => {
             saveRetryScheduled = false;
             try {
-                const ctx = getContext();
+                const ctx = window.SillyTavern?.getContext?.() || {};
                 if (ctx && typeof ctx.saveSettingsDebounced === "function") ctx.saveSettingsDebounced();
                 else if (ctx && typeof ctx.saveSettings === "function") ctx.saveSettings();
                 else if (typeof window.saveSettingsDebounced === "function") window.saveSettingsDebounced();
@@ -621,11 +621,11 @@ try { startFailsafeWatchdog(); } catch (_) {}
 
 export async function ensureChatStateLoaded() {
     // Wait for context to be available
-    if (getContext()) return true;
+    if (window.SillyTavern?.getContext?.()) return true;
 
     // Simple polling if not ready (though usually it is by the time extensions run)
     for (let i = 0; i < 20; i++) {
-        if (getContext()) return true;
+        if (window.SillyTavern?.getContext?.()) return true;
         await new Promise(r => setTimeout(r, 100));
     }
     return false;
@@ -829,7 +829,7 @@ const originalSave = saveSettings;
 
 function checkChatIdAndLoad() {
     try {
-        const ctx = getContext();
+        const ctx = window.SillyTavern?.getContext?.() || {};
         const cid = ctx ? ctx.chatId : null;
         if (cid !== lastChatId) {
             if (lastChatId !== null) {
@@ -852,7 +852,7 @@ function initChatPersistence() {
 
 // Chat-Bound State Wrappers
 export function getChatState(key, defaultValue = {}) {
-    const context = getContext();
+    const context = window.SillyTavern?.getContext?.() || {};
     if (!context || !context.chatId) return defaultValue;
     
     // Ensure metadata structure exists
@@ -865,7 +865,7 @@ export function getChatState(key, defaultValue = {}) {
 }
 
 export function saveChatState(key, value) {
-    const context = getContext();
+    const context = window.SillyTavern?.getContext?.() || {};
     if (!context || !context.chatId) return false;
     
     if (!window.chat_metadata) window.chat_metadata = {};

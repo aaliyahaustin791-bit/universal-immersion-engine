@@ -1,4 +1,4 @@
-import { getContext } from "/scripts/extensions.js";
+// import { getContext } from "/scripts/extensions.js"; // Patched: invalid path
 
 function stripCssBlocks(text) {
     const src = String(text || "").replace(/\r/g, "");

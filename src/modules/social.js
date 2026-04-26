@@ -1,6 +1,6 @@
 ﻿import { getSettings, commitStateUpdate } from "./core.js";
 import { generateContent } from "./apiClient.js";
-import { getContext } from "/scripts/extensions.js";
+// import { getContext } from "/scripts/extensions.js"; // Patched: invalid path
 import { notify } from "./notifications.js";
 import { injectRpEvent } from "./features/rp_log.js";
 import { getChatTranscriptText } from "./chatLog.js";
@@ -120,7 +120,7 @@ async function ensurePaperTemplate(name) {
 
 function resolveCurrentCharAvatarUrl() {
     try {
-        const ctx = getContext?.();
+        const ctx = window.SillyTavern?.getContext?.() || {};
         const c = ctx?.character || ctx?.char || ctx?.characterCard || (Array.isArray(ctx?.characters) ? ctx.characters[0] : null) || null;
         const card = c?.data?.data || c?.data || c || {};
         const direct =
@@ -321,7 +321,7 @@ function getChatMessageNodes(maxMessages) {
 
 function readSocialChatSignature() {
     try {
-        const ctx = getContext ? getContext() : {};
+        const ctx = window.SillyTavern?.window.SillyTavern?.getContext?.() || {} || {};
         const chatId = String(ctx?.chatId ?? "");
         const w = typeof window !== "undefined" ? window : globalThis;
         const arr = Array.isArray(w?.chat) ? w.chat : null;
@@ -334,7 +334,7 @@ function readSocialChatSignature() {
     } catch (_) {}
 
     try {
-        const ctx = getContext ? getContext() : {};
+        const ctx = window.SillyTavern?.window.SillyTavern?.getContext?.() || {} || {};
         const chatId = String(ctx?.chatId ?? "");
         const nodes = document.querySelectorAll("#chat .mes");
         if (!nodes || !nodes.length) return "";
@@ -484,7 +484,7 @@ function isMetaMemoryText(text) {
 }
 
 function buildMemoryBlock(person) {
-    const ctx = getContext ? getContext() : {};
+    const ctx = window.SillyTavern?.window.SillyTavern?.getContext?.() || {} || {};
     const user = String(ctx?.name1 || "User");
     const mems = Array.isArray(person?.memories) ? person.memories.slice() : [];
     mems.sort((a, b) => Number(b?.t || 0) - Number(a?.t || 0));
@@ -496,7 +496,7 @@ function buildMemoryBlock(person) {
 function renderMemoryOverlay() {
     const { person } = getActivePerson();
     if (!person) return;
-    const ctx = getContext ? getContext() : {};
+    const ctx = window.SillyTavern?.window.SillyTavern?.getContext?.() || {} || {};
     const user = String(ctx?.name1 || "User");
     $("#uie-social-mem-sub").text(`${person.name} ↔ ${user}`);
 
@@ -548,7 +548,7 @@ function renderMemoryOverlay() {
 async function scanMemoriesForActivePerson() {
     const { person } = getActivePerson();
     if (!person) return;
-    const ctx = getContext ? getContext() : {};
+    const ctx = window.SillyTavern?.window.SillyTavern?.getContext?.() || {} || {};
     const user = String(ctx?.name1 || "User");
     const transcript = await getChatTranscript(120);
     if (!transcript) {
@@ -665,7 +665,7 @@ export function renderSocial() {
                         avatar = fromChat;
                     } else {
                         try {
-                            const ctx = getContext?.();
+                            const ctx = window.SillyTavern?.getContext?.() || {};
                             const name2 = String(ctx?.name2 || "").trim().toLowerCase();
                             if (name2 && String(person.name || "").trim().toLowerCase() === name2) {
                                 avatar = resolveCurrentCharAvatarUrl();
@@ -972,7 +972,7 @@ function extractNamesFromChatDom(maxMessages) {
     const names = new Set();
     try {
         const nodes = getChatMessageNodes(maxMessages || 180);
-        const ctx = getContext ? getContext() : {};
+        const ctx = window.SillyTavern?.window.SillyTavern?.getContext?.() || {} || {};
         const userName = String(ctx?.name1 || "").trim().toLowerCase();
 
         for (const m of nodes) {
@@ -1200,7 +1200,7 @@ async function aiExtractNamesFromChat(maxMessages) {
         const transcript = msgs.join("\n").slice(-14000);
         if (!transcript) return { names: [], questions: [] };
 
-        const ctx = getContext ? getContext() : {};
+        const ctx = window.SillyTavern?.window.SillyTavern?.getContext?.() || {} || {};
         const user = String(ctx?.name1 || "").trim();
         const main = String(ctx?.name2 || "").trim();
 
@@ -1252,7 +1252,7 @@ async function scanChatIntoSocial({ silent } = {}) {
         const s = getSettings();
         normalizeSocial(s);
 
-        const ctx = getContext ? getContext() : {};
+        const ctx = window.SillyTavern?.window.SillyTavern?.getContext?.() || {} || {};
         const userName = String(ctx?.name1 || "").trim();
         const mainCharName = String(ctx?.name2 || "").trim();
         const deleted = deletedNameSet(s);

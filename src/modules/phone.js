@@ -41,37 +41,7 @@ let arrivalLastMesId = null;
 let callChatContext = "";
 
 // --- 4. EXPORTED INIT FUNCTION ---
-export async function initPhone() {
-    const $win = $("#uie-phone-window");
-    if (!$win.length) return;
-    
-    $win.off("click.phone change.phone input.phone keypress.phone");
-    $(document).off("click.phone change.phone input.phone keypress.phone");
 
-    // BIND OPEN BUTTON
-    $(document).off("click", "#btn-phn").on("click", "#btn-phn", () => {
-        const $p = $("#uie-phone-window");
-        const wasVisible = $p.is(":visible");
-        $p.fadeToggle(200);
-        if (!wasVisible) {
-            try {
-                if (typeof updateClock === "function") updateClock();
-                if (phoneClockInt) clearInterval(phoneClockInt);
-                phoneClockInt = setInterval(updateClock, 15000);
-            } catch (_) {}
-            try { window.UIE_navPush?.("win:#uie-phone-window"); } catch (_) {}
-        } else {
-            try {
-                if (phoneClockInt) clearInterval(phoneClockInt);
-                phoneClockInt = null;
-            } catch (_) {}
-            try { window.UIE_navPop?.(); } catch (_) {}
-        }
-    });
-
-    console.log("[UIE] Phone module initialized");
-    // ... any other phone initialization code goes here ...
-}
 
 function isInactiveChatMesNode(m) {
     try {
@@ -229,7 +199,7 @@ function getSocialMemoryBlockForName(targetName, maxItems = 8) {
 
 function getCharacterCardBlock(maxLen = 2200) {
     try {
-        const ctx = getContext?.();
+        const ctx = window.SillyTavern?.getContext?.() || {};
         const candidate =
             ctx?.character ||
             ctx?.char ||
@@ -313,7 +283,7 @@ function syncToMainChat(actionDescription) {
     } catch (_) {}
 }
 
-export async function initPhone() {
+    export async function initPhone() {
     const StateManagerMod = await import(`./StateManager.js?v=${window.UIE_BUILD || ''}`);
     window.StateManager = StateManagerMod;
     window.UIE.Phone = {
@@ -357,9 +327,7 @@ export async function initPhone() {
         }
     };
     const $win = $("#uie-phone-window");
-    if (!$win.length) return;
-    const $win = $("#uie-phone-window");
-    if (!$win.length) return;
+    
     $win.off("click.phone change.phone input.phone keypress.phone");
     $(document).off("click.phone change.phone input.phone keypress.phone");
 
@@ -384,8 +352,7 @@ export async function initPhone() {
         }
     });
 
-    console.log("[UIE] Phone module initialized");
-} // <-- AND THIS CLOSES initPhone()
+    console.log("[UIE] Phone module initialized");\n// initPhone fixed: removed stray closing brace // <-- AND THIS CLOSES initPhone()
 
 // ADD THIS TO HOOK UP THE AUDIO FILTER:
 // Using inline queries so we don't accidentally overwrite your existing variables!

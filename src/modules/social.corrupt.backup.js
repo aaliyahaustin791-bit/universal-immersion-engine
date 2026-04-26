@@ -1,6 +1,6 @@
 ﻿import { getSettings, commitStateUpdate } from "./core.js";
 import { generateContent } from "./apiClient.js";
-import { getContext } from "/scripts/extensions.js";
+// import { getContext } from "/scripts/extensions.js"; // Patched: invalid path
 import { notify } from "./notifications.js";
 import { injectRpEvent } from "./features/rp_log.js";
 import { getChatTranscriptText } from "./chatLog.js";
@@ -60,7 +60,7 @@ async function ensurePaperTemplate() {
 
 function resolveCurrentCharAvatarUrl() {
     try {
-        const ctx = getContext?.();
+        const ctx = window.SillyTavern?.getContext?.() || {};
         const c = ctx?.character || ctx?.char || ctx?.characterCard || (Array.isArray(ctx?.characters) ? ctx.characters[0] : null) || null;
         const card = c?.data?.data || c?.data || c || {};
         const direct =
@@ -268,7 +268,7 @@ function isTrivialMemory(s) {
 }
 
 function buildMemoryBlock(person) {
-    const ctx = getContext ? getContext() : {};
+    const ctx = window.SillyTavern?.window.SillyTavern?.getContext?.() || {} || {};
     const user = String(ctx?.name1 || "User");
     const mems = Array.isArray(person?.memories) ? person.memories.slice() : [];
     mems.sort((a, b) => Number(b?.t || 0) - Number(a?.t || 0));
@@ -280,7 +280,7 @@ function buildMemoryBlock(person) {
 function renderMemoryOverlay() {
     const { person } = getActivePerson();
     if (!person) return;
-    const ctx = getContext ? getContext() : {};
+    const ctx = window.SillyTavern?.window.SillyTavern?.getContext?.() || {} || {};
     const user = String(ctx?.name1 || "User");
     $("#uie-social-mem-sub").text(`${person.name} â†” ${user}`);
 
@@ -329,7 +329,7 @@ function renderMemoryOverlay() {
 async function scanMemoriesForActivePerson() {
     const { person } = getActivePerson();
     if (!person) return;
-    const ctx = getContext ? getContext() : {};
+    const ctx = window.SillyTavern?.window.SillyTavern?.getContext?.() || {} || {};
     const user = String(ctx?.name1 || "User");
     const transcript = await getChatTranscript(90);
     if (!transcript) {

@@ -6,7 +6,7 @@ import {
     updateLayout
 } from "./core.js";
 import { loadFeatureTemplate } from "./featureLoader.js";
-import { getContext } from "/scripts/extensions.js";
+// import { getContext } from "/scripts/extensions.js"; // Patched: invalid path
 import { generateContent, cleanOutput } from "./apiClient.js";
 import { notify, notifyLowHpIfNeeded } from "./notifications.js";
 import { normalizeStatusList, statusName, statusKey, formatRemaining, summarizeMods, computeStatusTotals, applyStatusTickToVitals, parseDurationToMs } from "./statusFx.js";
@@ -1869,7 +1869,7 @@ export function initInventory() {
 
       const chat = await getChatTranscriptText({ maxMessages: 30, maxChars: 2600 });
 
-      const persona = (() => { try { const ctx = getContext?.(); return String(ctx?.name1 || "You").trim() || "You"; } catch (_) { return "You"; } })();
+      const persona = (() => { try { const ctx = window.SillyTavern?.getContext?.() || {}; return String(ctx?.name1 || "You").trim() || "You"; } catch (_) { return "You"; } })();
       const priorityRules = `Rules (Priority Order):
 1) User request is HIGHEST PRIORITY. If provided, follow it exactly.
 2) Context is SUPPORTING ONLY. Use it to enrich details, not to override user request.
@@ -2562,7 +2562,7 @@ export function updateVitals() {
 
   let profileChanged = false;
   let ctx = null;
-  try { ctx = getContext?.() || null; } catch (_) { ctx = null; }
+  try { ctx = window.SillyTavern?.getContext?.() || {} || null; } catch (_) { ctx = null; }
 
   const personaName = String(ctx?.name1 || "").trim();
   if (s.character.syncPersona === undefined) {

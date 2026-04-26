@@ -1,5 +1,5 @@
 ﻿import { getSettings, commitStateUpdate } from "./core.js";
-import { getContext } from "/scripts/extensions.js";
+// import { getContext } from "/scripts/extensions.js"; // Patched: invalid path
 import { generateContent } from "./apiClient.js";
 import { notify } from "./notifications.js";
 import { normalizeStatusList, normalizeStatusEffect, statusKey } from "./statusFx.js";

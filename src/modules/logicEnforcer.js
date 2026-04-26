@@ -1,5 +1,5 @@
 import { getSettings, saveSettings } from "./core.js";
-import { getContext } from "/scripts/extensions.js";
+// import { getContext } from "/scripts/extensions.js"; // Patched: invalid path
 
 const PENDING_KEY = "__uiePendingSystemEvents";
 
@@ -115,7 +115,7 @@ function extractNsfwSystemRules(ctx) {
 
 export function buildSystemPrompt() {
   const s = getSettings() || {};
-  const ctx = getContext ? getContext() : {};
+  const ctx = window.SillyTavern?.getContext?.() || {};
   const lines = [];
 
   lines.push("**Core Role:**");

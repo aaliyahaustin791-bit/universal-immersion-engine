@@ -1,7 +1,7 @@
 ﻿import { getSettings, saveSettings, ensureChatStateLoaded, commitStateUpdate } from "./core.js";
 import { generateContent } from "./apiClient.js";
 import { getWorldState } from "./stateTracker.js";
-import { getContext } from "/scripts/extensions.js";
+// // import { getContext } from "/scripts/extensions.js"; // Patched: invalid path // Removed invalid import
 import { injectRpEvent } from "./features/rp_log.js";
 import { parseJsonLoose, normalizeDatabankArrayInPlace, toDatabankDisplayEntries, addDatabankEntryWithDedupe } from "./databankModel.js";
 
@@ -694,7 +694,7 @@ function isTrivialMemory(s) {
 }
 
 function buildMemoryBlock(person) {
-    const ctx = getContext ? getContext() : {};
+    const ctx = window.SillyTavern?.getContext?.() || {};
     const user = String(ctx?.name1 || "User");
     const mems = Array.isArray(person?.memories) ? person.memories.slice() : [];
     mems.sort((a, b) => Number(b?.t || 0) - Number(a?.t || 0));
@@ -706,7 +706,7 @@ function buildMemoryBlock(person) {
 function renderSocialMemoriesModal() {
     const { person } = getSocialPersonById(dbSocialActivePersonId);
     if (!person) return;
-    const ctx = getContext ? getContext() : {};
+    const ctx = window.SillyTavern?.getContext?.() || {};
     const user = String(ctx?.name1 || "User");
     $("#uie-db-social-mem-sub").text(`${person.name} â†” ${user}`);
 
@@ -737,7 +737,7 @@ function renderSocialMemoriesModal() {
 }
 
 async function scanMemoriesForPerson(person) {
-    const ctx = getContext ? getContext() : {};
+    const ctx = window.SillyTavern?.getContext?.() || {};
     const user = String(ctx?.name1 || "User");
     const transcript = (() => {
         const out = [];

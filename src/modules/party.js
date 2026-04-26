@@ -1,5 +1,5 @@
 ﻿import { getSettings, saveSettings, isMobileUI } from "./core.js";
-import { getContext } from "/scripts/extensions.js";
+// import { getContext } from "/scripts/extensions.js"; // Patched: invalid path
 import { injectRpEvent } from "./features/rp_log.js";
 import { generateContent } from "./apiClient.js";
 import { notify } from "./notifications.js";

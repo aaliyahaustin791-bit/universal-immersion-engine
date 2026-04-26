@@ -1,6 +1,6 @@
 import { generateRaw } from "/script.js";
 import { getSettings, saveSettings } from "./core.js";
-import { getContext } from "/scripts/extensions.js";
+// import { getContext } from "/scripts/extensions.js"; // Patched: invalid path
 import { buildSystemPrompt, consumePendingSystemEvents, validateResponse } from "./logicEnforcer.js";
 import { notify } from "./notifications.js";
 import { getChatTranscriptText } from "./chatLog.js";

@@ -1634,7 +1634,7 @@ function initMenuTabs() {
         // Force a save after ST handlers apply settings.
         setTimeout(() => {
             try {
-                const ctx = getContext?.();
+                const ctx = window.SillyTavern?.getContext?.() || {};
                 if (ctx?.saveSettingsDebounced) ctx.saveSettingsDebounced();
                 else if (ctx?.saveSettings) ctx.saveSettings();
                 else if (window.saveSettingsDebounced) window.saveSettingsDebounced();

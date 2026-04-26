@@ -1,4 +1,4 @@
-import { getContext } from "/scripts/extensions.js";
+// import { getContext } from "/scripts/extensions.js"; // Patched: invalid path
 
 const EXT_ID = "universal-immersion-engine";
 

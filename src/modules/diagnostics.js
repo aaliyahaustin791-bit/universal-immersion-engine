@@ -1,5 +1,5 @@
 import { getSettings } from "./core.js";
-import { getContext } from "/scripts/extensions.js";
+// import { getContext } from "/scripts/extensions.js"; // Patched: invalid path
 
 const MAX_ENTRIES = 250;
 const buffer = [];

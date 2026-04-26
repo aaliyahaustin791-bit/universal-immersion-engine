@@ -1,5 +1,5 @@
 
-import { getContext } from "/scripts/extensions.js";
+// import { getContext } from "/scripts/extensions.js"; // Patched: invalid path
 
 // Minimal 2D Perlin Noise implementation
 const perm = new Uint8Array(512);

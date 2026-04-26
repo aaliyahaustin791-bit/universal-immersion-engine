@@ -1,6 +1,6 @@
 import { getSettings, commitStateUpdate } from "./core.js";
 import { generateContent } from "./apiClient.js";
-import { getContext } from "/scripts/extensions.js";
+// import { getContext } from "/scripts/extensions.js"; // Patched: invalid path
 import { injectRpEvent } from "./features/rp_log.js";
 import { getChatTranscriptText } from "./chatLog.js";
 import { safeJsonParseArray } from "./jsonUtil.js";

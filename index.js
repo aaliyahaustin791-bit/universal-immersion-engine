@@ -394,7 +394,7 @@ jQuery(async () => {
 
 // Load data when extension initializes
 function loadUIEData() {
-  const context = getContext();
+  const context = window.SillyTavern?.getContext?.() || {};
   const metadata = context.chatMetadata || {};
   const uieData = metadata.uie || {
     inventory: [],
@@ -410,7 +410,7 @@ function loadUIEData() {
 
 // Save data when it changes
 function saveUIEData(newData) {
-  const context = getContext();
+  const context = window.SillyTavern?.getContext?.() || {};
   const metadata = context.chatMetadata || {};
   metadata.uie = newData;
   

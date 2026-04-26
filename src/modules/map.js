@@ -1,6 +1,6 @@
 import { getSettings, saveSettings } from "./core.js";
 import { generateContent } from "./apiClient.js";
-import { getContext } from "/scripts/extensions.js";
+// import { getContext } from "/scripts/extensions.js"; // Patched: invalid path
 import { generateImageAPI } from "./imageGen.js";
 import { MapRenderer } from "./maps/map_render.js";
 import { WorldBuilder } from "./maps/world_builder.js";
