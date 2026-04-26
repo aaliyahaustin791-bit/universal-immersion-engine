@@ -130,6 +130,11 @@ jQuery(async () => {
             try { console.log("[UIE] debugStatus", status); } catch (_) {}
             return status;
         };
+        // Inside your extension's init() or jQuery ready function:
+eventSource.on(event_types.CHAT_CHANGED, () => {
+    console.log("UIE: Chat changed, loading local state...");
+    loadChatData();
+});
     } catch (_) {}
 
     const uieBuildV = Date.now();
