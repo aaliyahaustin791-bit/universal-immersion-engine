@@ -1,4 +1,7 @@
-﻿const EXT_ID = "universal-immersion-engine";
+import { chat_metadata } from '../../../../chat.js';
+import { eventSource, event_types } from '../../../../script.js';
+
+const EXT_ID = "universal-immersion-engine";
 const basePathFallback = `scripts/extensions/third-party/${EXT_ID}`;
 const baseUrl = (() => {
     try {
