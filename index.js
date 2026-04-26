@@ -1,6 +1,38 @@
 import { chat_metadata } from '../../../../chat.js';
 import { eventSource, event_types } from '../../../../script.js';
 
+const defaultUieState = {
+    inventory: [],
+    phone: {},
+    databank: {}
+    // Add other RPG stats here
+};
+
+// Loads the data for the currently active chat
+function loadChatData() {
+    // If the current chat doesn't have UIE data yet, initialize it
+    if (!chat_metadata['uie_state']) {
+        chat_metadata['uie_state'] = structuredClone(defaultUieState);
+    }
+    
+    const currentData = chat_metadata['uie_state'];
+    
+    // TODO: Write a function to update your custom HTML UI with this data
+    refreshUIE(currentData); 
+}
+
+// Use this whenever an item is added, phone state changes, etc.
+function updateChatData(category, newData) {
+    if (!chat_metadata['uie_state']) {
+        chat_metadata['uie_state'] = structuredClone(defaultUieState);
+    }
+    
+    chat_metadata['uie_state'][category] = newData;
+    
+    // SillyTavern automatically saves the chat_metadata object to disk 
+    // whenever a message is sent or the chat is manually saved.
+}
+
 const EXT_ID = "universal-immersion-engine";
 const basePathFallback = `scripts/extensions/third-party/${EXT_ID}`;
 const baseUrl = (() => {
