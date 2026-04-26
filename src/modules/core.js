@@ -401,107 +401,54 @@ function restoreFromMirrorIfEmpty() {
     } catch (_) {}
 }
 
-export function getSettings() {
-    if (!isPersistentSettingsReady()) {
-        bootstrapTouched = true;
-        try {
-            const snap = readMirrorData();
-            if (snap && bootstrapSettings && typeof bootstrapSettings === "object" && looksEmptySettings(bootstrapSettings)) {
-                bootstrapSettings = JSON.parse(safeJson(snap) || "{}") || {};
-            }
-        } catch (_) {}
-        return bootstrapSettings;
+import { chat_metadata } from '../../../../chat.js';
+
+// The keys that make up a character's active RPG state in this chat
+const SESSION_KEYS = [
+    "inventory", "character", "currency", "currencySymbol", "currencyRate", 
+    "calendar", "map", "social", "diary", "databank", "activities",
+    "xp", "hp", "mp", "ap", "maxHp", "maxMp", "maxAp", "maxXp", "life", "image", "worldState"
+];
+
+// Call this whenever an RPG stat changes (e.g., spending currency, getting an item)
+export function saveStateToChat() {
+    if (!chat_metadata['uie_state']) {
+        chat_metadata['uie_state'] = {};
     }
-
-    if (!window.extension_settings) window.extension_settings = {};
-    if (!window.extension_settings[EXT_ID] || typeof window.extension_settings[EXT_ID] !== "object") {
-        window.extension_settings[EXT_ID] = {};
-    }
-
-    const s = window.extension_settings[EXT_ID];
-
-    // Always try to restore persisted settings BEFORE merging any bootstrap defaults.
-    // Bootstrap mutations can happen early (before ST hydrates extension_settings) and would otherwise
-    // make the bucket look non-empty, preventing mirror restore and causing settings loss.
-    restoreFromMirrorIfEmpty();
-
-    if (bootstrapTouched && bootstrapSettings && typeof bootstrapSettings === "object") {
-        try {
-            for (const [k, v] of Object.entries(bootstrapSettings)) {
-                if (!(k in s)) s[k] = v;
-            }
-        } catch (_) {}
-        bootstrapTouched = false;
-        bootstrapSettings = {};
-    }
-    return s;
+    
+    // Loop through your SESSION_KEYS and grab their current values
+    // Assuming these exist globally or inside a state object in core.js
+    SESSION_KEYS.forEach(key => {
+        // Replace `window.uieState[key]` with wherever you currently hold the active variables in memory
+        chat_metadata['uie_state'][key] = window.uieState[key]; 
+    });
 }
 
-export function saveSettings() {
-    const context = getContext();
-    if (!isPersistentSettingsReady()) {
-        bootstrapTouched = true;
-        try { if (bootstrapSettings && typeof bootstrapSettings === "object") bootstrapSettings.__uie_saved_at = Date.now(); } catch (_) {}
-        try { writeMirrorFrom(bootstrapSettings); } catch (_) {}
-        if (!saveRetryScheduled) {
-            saveRetryScheduled = true;
-            setTimeout(() => {
-                saveRetryScheduled = false;
-                try { saveSettings(); } catch (_) {}
-            }, 1000);
-        }
+// Call this when SillyTavern fires the CHAT_CHANGED event
+export function loadStateFromChat() {
+    // If the chat has no UIE data, set everything to defaults
+    if (!chat_metadata['uie_state']) {
+        console.log("UIE: New chat detected, initializing default state.");
+        resetSessionKeysToDefault();
         return;
     }
 
-    // IMPORTANT: Ensure any bootstrap writes are merged into the real settings bucket
-    // BEFORE we persist to mirror / ST disk. Otherwise we can end up saving an empty bucket.
-    let live = null;
-    try { live = getSettings(); } catch (_) { live = null; }
+    const currentState = chat_metadata['uie_state'];
     
-    // Ensure chat state is synced before saving
-    try { saveCurrentChatState(); } catch (_) {}
-
-    try { window.UIE_backupMaybe?.(); } catch (_) {}
-    try {
-        if (live && typeof live === "object") {
-            try { live.__uie_saved_at = Date.now(); } catch (_) {}
-            writeMirrorFrom(live);
+    // Unpack the chat's saved data back into your active variables
+    SESSION_KEYS.forEach(key => {
+        if (currentState[key] !== undefined) {
+            window.uieState[key] = currentState[key];
         }
-        else writeMirror();
-    } catch (_) {}
+    });
+    
+    // Update the HTML UI to reflect the loaded data
+    updateUIEOverlay(); 
+}
 
-    const saveFn = (() => {
-        try {
-            if (context && typeof context.saveSettingsDebounced === "function") {
-                return () => context.saveSettingsDebounced();
-            }
-            if (context && typeof context.saveSettings === "function") {
-                return () => context.saveSettings();
-            }
-            if (typeof window.saveSettingsDebounced === "function") {
-                return () => window.saveSettingsDebounced();
-            }
-        } catch (_) {}
-        return null;
-    })();
-
-    if (saveFn) {
-        try { saveFn(); } catch (_) {}
-        return;
-    }
-
-    if (!saveRetryScheduled) {
-        saveRetryScheduled = true;
-        setTimeout(() => {
-            saveRetryScheduled = false;
-            try {
-                const ctx = getContext();
-                if (ctx && typeof ctx.saveSettingsDebounced === "function") ctx.saveSettingsDebounced();
-                else if (ctx && typeof ctx.saveSettings === "function") ctx.saveSettings();
-                else if (typeof window.saveSettingsDebounced === "function") window.saveSettingsDebounced();
-            } catch (_) {}
-        }, 1000);
-    }
+function resetSessionKeysToDefault() {
+    // Clear out the active variables for a fresh chat
+    // e.g., window.uieState.inventory = []; window.uieState.hp = 100;
 }
 
 export function commitStateUpdate(opts = {}) {
