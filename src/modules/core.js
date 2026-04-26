@@ -1,207 +1,18 @@
-import { getContext } from "/scripts/extensions.js";
-import { chat_metadata } from '../../../../chat.js';
+// --- CORE UTILITIES ---
+function getSettings() {
+    const EXT_ID = "universal-immersion-engine";
+    if (!window.extension_settings) window.extension_settings = {};
+    if (!window.extension_settings[EXT_ID]) window.extension_settings[EXT_ID] = {};
+    return window.extension_settings[EXT_ID];
+}
 
-const EXT_ID = "universal-immersion-engine";
-
-const MIRROR_KEY = "uie_settings_mirror_v1";
-const MIRROR_IDB_FLAG_KEY = "uie_settings_mirror_idb_v1";
-const MIRROR_IDB_DB = "uie_settings_mirror";
-const MIRROR_IDB_STORE = "mirror";
-const MIRROR_IDB_ID = "current";
-let saveRetryScheduled = false;
-
-let bootstrapSettings = {};
-let bootstrapTouched = false;
-
-const INIT_GRACE_MS = 30000;
-const INIT_DEADLINE = Date.now() + INIT_GRACE_MS;
-
-let mirrorIdbCache = null;
-let mirrorIdbLoadPromise = null;
-
-function applyMirrorToCurrent(data) {
-    try {
-        if (!isNonEmptyObject(data)) return false;
-        if (!window.extension_settings) window.extension_settings = {};
-        if (!window.extension_settings[EXT_ID] || typeof window.extension_settings[EXT_ID] !== "object") {
-            window.extension_settings[EXT_ID] = {};
-        }
-        const current = window.extension_settings[EXT_ID];
-        try {
-            const curAt = Number(current?.__uie_saved_at || 0) || 0;
-            const mirAt = Number(data?.__uie_saved_at || 0) || 0;
-            if (hasUserData(current) && mirAt > 0 && curAt > 0 && mirAt <= curAt + 250) return false;
-            if (hasUserData(current) && mirAt <= 0) return false;
-        } catch (_) {
-            if (hasUserData(current)) return false;
-        }
-        for (const k of Object.keys(current)) delete current[k];
-        for (const [k, v] of Object.entries(data)) current[k] = v;
-
-        try {
-            setTimeout(() => {
-                try { window.UIE_refreshStateSaves?.(); } catch (_) {}
-                try {
-                    const event = new CustomEvent("uie:state_updated", { detail: { mirror: true } });
-                    window.dispatchEvent(event);
-                } catch (_) {}
-                try { updateLayout(); } catch (_) {}
-            }, 0);
-        } catch (_) {}
-        return true;
-    } catch (_) {
-        return false;
+function saveSettings() {
+    if (typeof window.saveSettings === 'function') {
+        window.saveSettings();
     }
 }
 
-function openMirrorDb() {
-    return new Promise((resolve, reject) => {
-        try {
-            const req = indexedDB.open(MIRROR_IDB_DB, 1);
-            req.onupgradeneeded = () => {
-                try {
-                    const db = req.result;
-                    if (!db.objectStoreNames.contains(MIRROR_IDB_STORE)) {
-                        db.createObjectStore(MIRROR_IDB_STORE, { keyPath: "id" });
-                    }
-                } catch (_) {}
-            };
-            req.onsuccess = () => resolve(req.result);
-            req.onerror = () => reject(req.error);
-        } catch (e) {
-            reject(e);
-        }
-    });
-}
-
-async function mirrorDbPut(payload) {
-    const db = await openMirrorDb();
-    return new Promise((resolve, reject) => {
-        try {
-            const tx = db.transaction(MIRROR_IDB_STORE, "readwrite");
-            tx.oncomplete = () => resolve(true);
-            tx.onerror = () => reject(tx.error);
-            tx.objectStore(MIRROR_IDB_STORE).put(payload);
-        } catch (e) {
-            reject(e);
-        }
-    }).finally(() => {
-        try { db.close(); } catch (_) {}
-    });
-}
-
-async function mirrorDbGet() {
-    const db = await openMirrorDb();
-    return new Promise((resolve, reject) => {
-        try {
-            const tx = db.transaction(MIRROR_IDB_STORE, "readonly");
-            const req = tx.objectStore(MIRROR_IDB_STORE).get(MIRROR_IDB_ID);
-            req.onsuccess = () => resolve(req.result || null);
-            req.onerror = () => reject(req.error);
-        } catch (e) {
-            reject(e);
-        }
-    }).finally(() => {
-        try { db.close(); } catch (_) {}
-    });
-}
-
-function kickMirrorIdbLoad() {
-    try {
-        if (mirrorIdbLoadPromise) return mirrorIdbLoadPromise;
-        mirrorIdbLoadPromise = (async () => {
-            try {
-                const rec = await mirrorDbGet();
-                const data = rec?.data;
-                if (isNonEmptyObject(data)) {
-                    try {
-                        if (!Number(data.__uie_saved_at) && Number(rec?.at || 0)) data.__uie_saved_at = Number(rec.at || 0) || Date.now();
-                    } catch (_) {}
-                    mirrorIdbCache = { at: Number(rec?.at || 0) || 0, data };
-                    try { localStorage.setItem(MIRROR_IDB_FLAG_KEY, String(mirrorIdbCache.at || Date.now())); } catch (_) {}
-                    try { applyMirrorToCurrent(mirrorIdbCache.data); } catch (_) {}
-                }
-            } catch (_) {}
-            return mirrorIdbCache;
-        })();
-        return mirrorIdbLoadPromise;
-    } catch (_) {
-        return null;
-    }
-}
-
-try { kickMirrorIdbLoad(); } catch (_) {}
-
-function isPersistentSettingsReady() {
-    try {
-        const es = window.extension_settings;
-        if (!es || typeof es !== "object") return false;
-        if (Object.prototype.hasOwnProperty.call(es, EXT_ID)) return true;
-        try { if (hasNonEmptyMirror()) return true; } catch (_) {}
-        return Date.now() > INIT_DEADLINE;
-    } catch (_) {
-        return false;
-    }
-}
-
-function hasUserData(s) {
-    try {
-        if (!s || typeof s !== "object") return false;
-        const invItems = Array.isArray(s?.inventory?.items) ? s.inventory.items.length : 0;
-        const hasSavedStates = s.savedStates && typeof s.savedStates === "object\" && Object.keys(s.savedStates).length > 0;
-        return invItems > 0 || hasSavedStates;
-    } catch (_) {
-        return false;
-    }
-}
-
-function looksEmptySettings(s) {
-    try {
-        if (!s || typeof s !== "object") return true;
-        const keys = Object.keys(s);
-        if (!keys.length) return true;
-        return false;
-    } catch (_) {
-        return true;
-    }
-}
-
-function hasNonEmptyMirror() {
-     try {
-         const raw = localStorage.getItem(MIRROR_KEY);
-         if (!raw) return !!(mirrorIdbCache && isNonEmptyObject(mirrorIdbCache.data));
-         let payload = JSON.parse(raw);
-         return isNonEmptyObject(payload?.data);
-     } catch (_) {
-        return false;
-     }
-}
-
-export function commitStateUpdate(opts = {}) {
-    saveSettings();
-    if (opts.layout) updateLayout();
-    if (opts.emit) {
-        const event = new CustomEvent("uie:state_updated", { detail: opts });
-        window.dispatchEvent(event);
-    }
-}
-
-export function failsafeRecover(opts = {}) {
-    try { kickMirrorIdbLoad(); } catch (_) {}
-    try { updateLayout(); } catch (_) {}
-    try { window.UIE_refreshStateSaves?.(); } catch (_) {}
-}
-
-export async function ensureChatStateLoaded() {
-    if (getContext()) return true;
-    for (let i = 0; i < 20; i++) {
-        if (getContext()) return true;
-        await new Promise(r => setTimeout(r, 100));
-    }
-    return false;
-}
-
-// --- CHAT PERSISTENCE ---
+// --- CHAT PERSISTENCE LOGIC ---
 let lastChatId = null;
 const SESSION_KEYS = [
     "inventory", "character", "currency", "currencySymbol", "currencyRate", 
@@ -209,24 +20,46 @@ const SESSION_KEYS = [
     "xp", "hp", "mp", "ap", "maxHp", "maxMp", "maxAp", "maxXp", "life", "image", "worldState"
 ];
 
+function getChatMetadata() {
+    // Access the global chat_metadata object safely
+    if (typeof window.chat_metadata !== 'undefined') {
+        return window.chat_metadata;
+    }
+    // Fallback if accessed before chat is loaded
+    return {}; 
+}
+
 function saveCurrentChatState() {
     if (!lastChatId) return;
     const s = getSettings();
-    if (!chat_metadata['uie_state']) chat_metadata['uie_state'] = {};
+    const meta = getChatMetadata();
+    
+    if (!meta['uie_state']) {
+        meta['uie_state'] = {};
+    }
     
     for (const k of SESSION_KEYS) {
         if (s[k] !== undefined) {
-            chat_metadata['uie_state'][k] = JSON.parse(JSON.stringify(s[k]));
+            meta['uie_state'][k] = JSON.parse(JSON.stringify(s[k]));
         }
+    }
+    
+    // Clean up old bloat if it exists
+    if (s.chats) {
+        delete s.chats;
+        saveSettings();
     }
 }
 
 function loadChatState(chatId) {
     const s = getSettings();
     lastChatId = chatId;
+    
     if (!chatId) return;
-
-    const saved = chat_metadata['uie_state'];
+    
+    const meta = getChatMetadata();
+    const saved = meta['uie_state'];
+    
     if (saved) {
         for (const k of SESSION_KEYS) {
             if (saved[k] !== undefined) {
@@ -235,17 +68,34 @@ function loadChatState(chatId) {
                 delete s[k];
             }
         }
+    } else {
+        // New chat: Reset session keys
+        for (const k of SESSION_KEYS) {
+            delete s[k];
+        }
     }
-    sanitizeSettings();
-    updateLayout();
+    
+    // Refresh UI
+    setTimeout(() => {
+        try { window.UIE_refreshStateSaves?.(); } catch (_) {}
+        try { window.UIE.updateLayout(); } catch (_) {}
+    }, 50);
 }
 
 function checkChatIdAndLoad() {
     try {
-        const ctx = getContext();
-        const cid = ctx ? ctx.chatId : null;
+        // Access ST's context safely
+        let cid = null;
+        if (typeof window.getContext === 'function') {
+            const ctx = window.getContext();
+            cid = ctx ? ctx.chatId : null;
+        } else if (typeof window.chat_metadata !== 'undefined') {
+            // Fallback for older ST versions or different loading orders
+            cid = window.chat_metadata.chatId;
+        }
+
         if (cid !== lastChatId) {
-            console.log(`[UIE] Chat changed: ${lastChatId} -> ${cid}`);
+            console.log(`[UIE] Chat changed to: ${cid}`);
             loadChatState(cid);
         } else if (cid) {
             saveCurrentChatState();
@@ -253,23 +103,37 @@ function checkChatIdAndLoad() {
     } catch (_) {}
 }
 
+// Start the persistence loop
 setInterval(checkChatIdAndLoad, 1000);
 
-export function updateLayout() {
-    const s = getSettings();
-    // Layout logic (launcher, scales, etc.)
-}
+// --- UI & LAYOUT ---
+window.UIE = window.UIE || {};
 
-export function sanitizeSettings() {
+window.UIE.updateLayout = function() {
+    const s = getSettings();
+    const launcher = document.getElementById("uie-launcher");
+    if (launcher) {
+        launcher.style.display = s?.enabled === false ? "none" : "flex";
+    }
+};
+
+window.UIE.sanitizeSettings = function() {
     const s = getSettings();
     if (!s.inventory) s.inventory = { items: [] };
     if (!s.character) s.character = { stats: {} };
-    // Add additional sanitization as needed
-}
+    if (s.enabled === undefined) s.enabled = true;
+};
 
-// Global UI and toggle listeners
-$("body").on("change", "#uie-setting-enable", function (e) {
+// --- INITIALIZATION ---
+$(document).ready(function() {
+    window.UIE.sanitizeSettings();
+    window.UIE.updateLayout();
+});
+
+// --- EVENT LISTENERS ---
+$("body").on("change", "#uie-setting-enable", function() {
     const s = getSettings();
     s.enabled = $(this).prop("checked");
     saveSettings();
+    window.UIE.updateLayout();
 });
