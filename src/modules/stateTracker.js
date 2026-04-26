@@ -1307,7 +1307,7 @@ export async function scanEverything(opts = {}) {
     // Only proceed if system checks are allowed, UNLESS forced by user
     if (!force && (s.enabled === false || s.generation?.allowSystemChecks === false)) return;
 
-    const ctx = getContext ? getContext() : {};
+    const ctx = safeGetContext?.() || {};
     const userName = String(ctx.name1 || "User").trim();
     const charName = String(ctx.name2 || "Character").trim();
 

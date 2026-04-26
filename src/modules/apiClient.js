@@ -51,7 +51,7 @@ async function chatLogCheck() {
 
 function loreCheck() {
     try {
-        const ctx = getContext?.();
+const ctx = safeGetContext?.() || {};
         const maybe = ctx?.world_info || ctx?.lorebook || ctx?.lore || ctx?.worldInfo;
         const keys = [];
         if (Array.isArray(maybe)) {
@@ -68,7 +68,7 @@ function loreCheck() {
 
 function characterCheck() {
     try {
-        const ctx = getContext?.();
+const ctx = safeGetContext?.() || {};
         const out = {
             user: ctx?.name1,
             character: ctx?.name2,
@@ -84,7 +84,7 @@ function characterCheck() {
 
 function userCheck() {
     try {
-        const ctx = getContext?.();
+const ctx = safeGetContext?.() || {};
         return String(ctx?.name1 || "You");
     } catch (_) {
         return "You";
@@ -93,7 +93,7 @@ function userCheck() {
 
 function personaCheck() {
     try {
-        const ctx = getContext?.() || {};
+const ctx = safeGetContext?.() || {};
         const user = String(ctx?.name1 || ctx?.user || "User").trim() || "User";
         const name =
             String(
@@ -125,7 +125,7 @@ function personaCheck() {
 
 function characterCardCheck() {
     try {
-        const ctx = getContext?.() || {};
+const ctx = safeGetContext?.() || {};
         const ch =
             ctx?.character ||
             ctx?.char ||
@@ -154,7 +154,7 @@ function characterCardCheck() {
 
 function worldInfoDetailsCheck() {
     try {
-        const ctx = getContext?.() || {};
+const ctx = safeGetContext?.() || {};
         const raw = ctx?.world_info || ctx?.worldInfo || ctx?.lorebook || ctx?.lore || [];
         const arr = Array.isArray(raw) ? raw : (raw && typeof raw === "object" ? Object.values(raw) : []);
         const items = [];
@@ -1262,7 +1262,7 @@ export async function generateContent(prompt, type) {
         const ctxBlock = allowCtx ? (() => {
             try {
                 // Try to get chat from SillyTavern context first
-                const stCtx = getContext?.() || {};
+const ctx = safeGetContext?.() || {};
                 const chat = Array.isArray(stCtx.chat) ? stCtx.chat : [];
 
                 if (chat.length > 0) {

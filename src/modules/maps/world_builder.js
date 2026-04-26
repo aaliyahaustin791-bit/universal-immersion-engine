@@ -55,7 +55,7 @@ export class WorldBuilder {
     }
 
     scanLore() {
-        const ctx = getContext?.() || {};
+        const ctx = safeGetContext?.() || {};
         const lore = ctx.world_info || ctx.lorebook || [];
         const entries = Array.isArray(lore) ? lore : (lore.entries || (typeof lore === 'object' ? Object.values(lore) : []));
 

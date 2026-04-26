@@ -43,7 +43,7 @@ function esc(s) {
 
 function getLoreKeys() {
     try {
-        const ctx = getContext?.();
+const ctx = safeGetContext?.() || {};
         if (!ctx) return [];
         const keys = [];
 

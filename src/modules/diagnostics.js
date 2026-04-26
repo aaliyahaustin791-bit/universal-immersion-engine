@@ -150,7 +150,7 @@ function runDomScan() {
     const aiConfirm = !!(s?.generation?.aiConfirm);
     logLine(`AI confirm: ${aiConfirm ? "ON" : "OFF"}`, "info");
     try {
-        const ctx = getContext?.() || {};
+const ctx = safeGetContext?.() || {};
         const ep = ctx?.extensionPrompts && typeof ctx.extensionPrompts === "object" ? ctx.extensionPrompts : {};
         const hasTriggers = typeof ep.UIE_TRIGGERS === "string" && ep.UIE_TRIGGERS.includes("[UIE_CALL:");
         const hasRel = typeof ep.UIE_RELATIONSHIPS === "string" && ep.UIE_RELATIONSHIPS.includes("[UIE_RELATIONSHIP_GOVERNOR");

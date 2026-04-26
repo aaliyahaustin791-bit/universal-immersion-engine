@@ -619,6 +619,8 @@ function startFailsafeWatchdog() {
 
 try { startFailsafeWatchdog(); } catch (_) {}
 
+export function safeGetContext() { return window.SillyTavern?.getContext?.() || window.getContext?.() || {}; }
+window.safeGetContext = safeGetContext;
 export async function ensureChatStateLoaded() {
     // Wait for context to be available
     if (window.SillyTavern?.getContext?.()) return true;

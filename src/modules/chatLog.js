@@ -100,7 +100,7 @@ async function tryImportChatArray() {
         if (Array.isArray(w?.SillyTavern?.chat)) return w.SillyTavern.chat;
     } catch (_) {}
     try {
-        const ctx = getContext ? getContext() : null;
+        const ctx = safeGetContext?.() || {};
         if (Array.isArray(ctx?.chat)) return ctx.chat;
         if (Array.isArray(ctx?.messages)) return ctx.messages;
     } catch (_) {}

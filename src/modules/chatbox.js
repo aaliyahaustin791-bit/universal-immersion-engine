@@ -1,6 +1,6 @@
 ﻿import { getSettings, saveSettings } from "./core.js";
 import { notify } from "./notifications.js";
-import { getContext } from "../../../../../extensions.js";
+// import { getContext } from "../../../../../extensions.js";
 
 let bound = false;
 let observer = null;
@@ -363,7 +363,7 @@ function refreshCache() {
     if (typeof window !== "undefined" && Array.isArray(window.chat) && window.chat.length > 0) data = window.chat;
     else {
         try {
-            const ctx = getContext ? getContext() : null;
+            const ctx = safeGetContext?.() || {};
             if (ctx && Array.isArray(ctx.chat) && ctx.chat.length > 0) data = ctx.chat;
         } catch (_) {}
     }

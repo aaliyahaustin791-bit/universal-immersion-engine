@@ -26,7 +26,7 @@ function getI18nextInstance() {
         try { candidates.push(window.SillyTavern?.i18next); } catch (_) {}
         try { candidates.push(window.SillyTavern?.i18n); } catch (_) {}
         try {
-            const ctx = getContext?.() || null;
+            const ctx = safeGetContext?.() || {};
             if (ctx) {
                 candidates.push(ctx.i18next);
                 candidates.push(ctx.i18n);
@@ -554,7 +554,7 @@ export function setLang(lang) {
     } catch (_) {}
 
     try {
-        const ctx = getContext?.();
+        const ctx = safeGetContext?.() || {};
         if (ctx?.saveSettingsDebounced) ctx.saveSettingsDebounced();
         else if (ctx?.saveSettings) ctx.saveSettings();
         else if (window.saveSettingsDebounced) window.saveSettingsDebounced();

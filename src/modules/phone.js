@@ -156,7 +156,7 @@ function esc(s) {
 
 function getPersonaName() {
     try {
-        const ctx = getContext?.();
+        const ctx = safeGetContext?.() || {};
         return String(ctx?.name1 || "You").trim() || "You";
     } catch (_) {
         return "You";
@@ -284,7 +284,7 @@ function syncToMainChat(actionDescription) {
 }
 
     export async function initPhone() {
-    const StateManagerMod = await import(`./StateManager.js?v=${window.UIE_BUILD || ''}`);
+    const StateManagerMod = await import(`./StateManager.js`);
     window.StateManager = StateManagerMod;
     window.UIE.Phone = {
         clearState: function() {
@@ -352,10 +352,9 @@ function syncToMainChat(actionDescription) {
         }
     });
 
-    console.log("[UIE] Phone module initialized");\n// initPhone fixed: removed stray closing brace // <-- AND THIS CLOSES initPhone()
+console.log("[UIE] Phone module initialized");
 
-// ADD THIS TO HOOK UP THE AUDIO FILTER:
-// Using inline queries so we don't accidentally overwrite your existing variables!
+
 
 document.getElementById('call-accept-btn')?.addEventListener('click', () => {
     const context = window.SillyTavern?.getContext?.();
@@ -1073,8 +1072,8 @@ document.getElementById('call-end-btn')?.addEventListener('click', () => {
 
         const mainCtx = getMainChatContext(5);
         const chat = getChatSnippet(50);
-        const lore = (() => { try { const ctx = getContext?.(); const maybe = ctx?.world_info || ctx?.lorebook || ctx?.lore || ctx?.worldInfo; const keys=[]; if(Array.isArray(maybe)){ for(const it of maybe){ const k=it?.key||it?.name||it?.title; if(k) keys.push(String(k)); } } return Array.from(new Set(keys)).slice(0, 60).join(", "); } catch(_) { return ""; } })();
-        const character = (() => { try { const ctx = getContext?.(); return JSON.stringify({ user: ctx?.name1, character: ctx?.name2, chatId: ctx?.chatId, characterId: ctx?.characterId, groupId: ctx?.groupId }); } catch(_) { return "{}"; } })();
+        const lore = (() => { try { const ctx = safeGetContext?.() || {}; const maybe = ctx?.world_info || ctx?.lorebook || ctx?.lore || ctx?.worldInfo; const keys=[]; if(Array.isArray(maybe)){ for(const it of maybe){ const k=it?.key||it?.name||it?.title; if(k) keys.push(String(k)); } } return Array.from(new Set(keys)).slice(0, 60).join(", "); } catch(_) { return ""; } })();
+        const character = (() => { try { const ctx = safeGetContext?.() || {}; return JSON.stringify({ user: ctx?.name1, character: ctx?.name2, chatId: ctx?.chatId, characterId: ctx?.characterId, groupId: ctx?.groupId }); } catch(_) { return "{}"; } })();
         const threadTail = getThreadTail(targetName, 10);
         const persona = getPersonaName();
         const card = getCharacterCardBlock(2600);
@@ -1876,8 +1875,8 @@ ${chat}`.slice(0, 6000), "System Check");
         if (s?.ai && s.ai.phoneCalls === false) return;
         const mainCtx = getMainChatContext(50);
         const chat = callChatContext || getChatSnippet(50);
-        const lore = (() => { try { const ctx = getContext?.(); const maybe = ctx?.world_info || ctx?.lorebook || ctx?.lore || ctx?.worldInfo; const keys=[]; if(Array.isArray(maybe)){ for(const it of maybe){ const k=it?.key||it?.name||it?.title; if(k) keys.push(String(k)); } } return Array.from(new Set(keys)).slice(0, 60).join(", "); } catch(_) { return ""; } })();
-        const character = (() => { try { const ctx = getContext?.(); return JSON.stringify({ user: ctx?.name1, character: ctx?.name2, chatId: ctx?.chatId, characterId: ctx?.characterId, groupId: ctx?.groupId }); } catch(_) { return "{}"; } })();
+        const lore = (() => { try { const ctx = safeGetContext?.() || {}; const maybe = ctx?.world_info || ctx?.lorebook || ctx?.lore || ctx?.worldInfo; const keys=[]; if(Array.isArray(maybe)){ for(const it of maybe){ const k=it?.key||it?.name||it?.title; if(k) keys.push(String(k)); } } return Array.from(new Set(keys)).slice(0, 60).join(", "); } catch(_) { return ""; } })();
+        const character = (() => { try { const ctx = safeGetContext?.() || {}; return JSON.stringify({ user: ctx?.name1, character: ctx?.name2, chatId: ctx?.chatId, characterId: ctx?.characterId, groupId: ctx?.groupId }); } catch(_) { return "{}"; } })();
         const card = getCharacterCardBlock(2600);
         const persona = getPersonaName();
         const mem = getSocialMemoryBlockForName(n, 8);

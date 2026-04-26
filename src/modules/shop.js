@@ -32,7 +32,7 @@ async function chatSnippet() {
 
 function loreKeys() {
     try {
-        const ctx = getContext?.();
+        const ctx = safeGetContext?.() || {};
         const maybe = ctx?.world_info || ctx?.lorebook || ctx?.lore || ctx?.worldInfo;
         const keys = [];
         if (Array.isArray(maybe)) {
