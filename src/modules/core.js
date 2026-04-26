@@ -1,4 +1,5 @@
 import { getContext } from "/scripts/extensions.js";
+import { chat_metadata } from '../../../../chat.js';
 
 const EXT_ID = "universal-immersion-engine";
 
@@ -652,6 +653,7 @@ export function isMobileUI() {
 
 // --- CHAT PERSISTENCE ---
 let lastChatId = null;
+
 // savedStates is global (library of manual saves) - never per-chat, never reset on new chat
 const SESSION_KEYS = [
     "inventory", "character", "currency", "currencySymbol", "currencyRate", 
@@ -662,39 +664,120 @@ const SESSION_KEYS = [
 function getChatScopedSocialDeletedNames(meta) {
     try {
         const arr = Array.isArray(meta?.deletedNames) ? meta.deletedNames : [];
-        return arr
-            .map((x) => String(x || "").trim())
-            .filter(Boolean)
-            .slice(-400);
+        return arr.map((x) => String(x || "").trim()).filter(Boolean).slice(-400);
     } catch (_) {
         return [];
     }
 }
 
-function saveCurrentChatState() {
+// Writes the active game state directly into the current chat's file
+export function saveCurrentChatState() {
     if (!lastChatId) return;
     const s = getSettings();
-    if (!s.chats) s.chats = {};
     
-    const data = {};
+    // Create the UIE data bucket in the chat metadata if it doesn't exist
+    if (!chat_metadata['uie_state']) {
+        chat_metadata['uie_state'] = {};
+    }
+    
     let hasData = false;
     for (const k of SESSION_KEYS) {
         if (s[k] !== undefined) {
-            data[k] = s[k];
+            chat_metadata['uie_state'][k] = JSON.parse(safeJson(s[k]));
             hasData = true;
         }
     }
 
     const deletedNames = getChatScopedSocialDeletedNames(s?.socialMeta);
     if (deletedNames.length) {
-        data.socialMeta = { deletedNames };
+        chat_metadata['uie_state'].socialMeta = { deletedNames };
         hasData = true;
     }
-    
-    if (hasData) {
-        s.chats[lastChatId] = JSON.parse(safeJson(data));
+
+    // CLEANUP: If the user has the old bloated global chat storage, delete it to free up memory
+    if (s.chats) {
+        delete s.chats;
+        saveSettings(); 
     }
 }
+
+// Loads the game state from the current chat's file into active memory
+function loadChatState(chatId) {
+    const s = getSettings();
+    const autoScanPref = s?.socialMeta?.autoScan === true;
+    
+    lastChatId = chatId;
+    
+    if (!chatId) return; // No chat loaded
+    
+    // Pull from SillyTavern's chat metadata instead of the global settings
+    const saved = chat_metadata['uie_state'];
+    
+    if (saved) {
+        // Restore saved data to active memory
+        for (const k of SESSION_KEYS) {
+            if (saved[k] !== undefined) {
+                s[k] = JSON.parse(safeJson(saved[k]));
+            } else {
+                delete s[k];
+            }
+        }
+    } else {
+        // New chat or no data: Reset session keys to defaults
+        for (const k of SESSION_KEYS) {
+            delete s[k];
+        }
+    }
+
+    s.socialMeta = {
+        autoScan: autoScanPref,
+        deletedNames: getChatScopedSocialDeletedNames(saved?.socialMeta),
+    };
+    
+    // Re-hydrate defaults
+    sanitizeSettings();
+    
+    // Notify system
+    setTimeout(() => {
+        try { window.UIE_refreshStateSaves?.(); } catch (_) {}
+        try {
+            const event = new CustomEvent("uie:state_updated", { detail: { chatLoad: true } });
+            window.dispatchEvent(event);
+        } catch (_) {}
+        try { updateLayout(); } catch (_) {}
+        
+        // Refresh specific modules that might be stale
+        try { import("./features/life.js").then(m => m.render?.()); } catch (_) {}
+        try { import("./features/items.js").then(m => m.render?.()); } catch (_) {}
+        try { import("./features/skills.js").then(m => m.init?.()); } catch (_) {}
+        try { import("./features/assets.js").then(m => m.init?.()); } catch (_) {}
+    }, 50);
+}
+
+function checkChatIdAndLoad() {
+    try {
+        const ctx = getContext();
+        const cid = ctx ? ctx.chatId : null;
+        if (cid !== lastChatId) {
+            console.log(`[UIE] Chat changed: ${lastChatId} -> ${cid}`);
+            loadChatState(cid);
+        } else {
+            // Keep chat metadata updated with any changes made while playing
+            saveCurrentChatState();
+        }
+    } catch (_) {}
+}
+
+let chatPollInterval = null;
+function initChatPersistence() {
+    if (chatPollInterval) return;
+    checkChatIdAndLoad();
+    // Polls every second to sync active state to chat_metadata
+    chatPollInterval = setInterval(checkChatIdAndLoad, 1000);
+}
+
+// Start monitoring
+initChatPersistence();
 
 function loadChatState(chatId) {
     const s = getSettings();
