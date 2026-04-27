@@ -254,8 +254,9 @@ jQuery(async () => {
                          const localData = stateManager.getChatData();
                          
                          if (window.UIE && window.UIE.Phone) {
-                             if (window.UIE.Phone.clearState) window.UIE.Phone.clearState();
-                             if (window.UIE.Phone.loadData) window.UIE.Phone.loadData(localData.phone);
+                             console.log('[UIE DEBUG] CHAT_CHANGED fired! chatId:', stateManager.getSafeContext()?.chatId, 'localData.phone keys len:', Object.keys(localData.phone || {}).length || 0);
+                            if (window.UIE.Phone.clearState) window.UIE.Phone.clearState();
+                            if (window.UIE.Phone.loadData) window.UIE.Phone.loadData(localData.phone);
                          }
                          if (window.UIE) {
                              if (window.UIE.Inventory?.loadData) window.UIE.Inventory.loadData(localData.inventory);

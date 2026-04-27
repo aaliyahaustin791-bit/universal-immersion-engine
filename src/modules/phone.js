@@ -291,6 +291,7 @@ function syncToMainChat(actionDescription) {
             activeContact = null;
             dialBuf = '';
             const s = getSettings();
+            console.log('[UIE DEBUG] phone.clearState BEFORE RESET: chatId:', window.StateManager?.getSafeContext?.()?.chatId, 's.phone.smsThreads len:', Object.keys(s.phone?.smsThreads || {}).length || 0, 'arrivals len:', (s.phone?.arrivals || []).length || 0);
             if (s.phone) {
                 s.phone.smsThreads = {};
                 s.phone.arrivals = [];
@@ -306,6 +307,7 @@ function syncToMainChat(actionDescription) {
             } catch (_) {}
         },
         loadData: function(phoneData) {
+            console.log('[UIE DEBUG] phone.loadData called: chatId:', window.StateManager?.getSafeContext?.()?.chatId, 'input phoneData keys:', Object.keys(phoneData || {}), 'len:', Object.keys(phoneData || {}).length || 0);
             const s = getSettings();
             const defaultPhone = {
                 bg: "", lockBg: "", pin: "", deviceSkin: "classic", unlockedDevices: ["classic"],
