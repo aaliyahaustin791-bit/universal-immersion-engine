@@ -1263,12 +1263,12 @@ export async function generateContent(prompt, type) {
             try {
                 // Try to get chat from SillyTavern context first
 const ctx = safeGetContext?.() || {};
-                const chat = Array.isArray(stCtx.chat) ? stCtx.chat : [];
+                const chat = Array.isArray(ctx.chat) ? ctx.chat : [];
 
                 if (chat.length > 0) {
                     // Get last 8 messages to be safe
                     const recent = chat.slice(-8);
-                    let ctx = "";
+                    let domCtx = "";
                     for (const m of recent) {
                         const isUser = m.is_user || m.role === "user";
                         const name = String(m.name || (isUser ? "You" : "Story"));
@@ -1287,7 +1287,7 @@ const ctx = safeGetContext?.() || {};
                 const chatEl = document.querySelector("#chat");
                 if (!chatEl) return "";
                 const msgs = Array.from(chatEl.querySelectorAll(".mes")).slice(-8);
-                let ctx = "";
+                let domCtx = "";
                 for (const m of msgs) {
                     const isUser =
                         m.classList?.contains("is_user") ||
@@ -1301,10 +1301,10 @@ const ctx = safeGetContext?.() || {};
                         "";
                     const line = `${isUser ? "You" : "Story"}: ${String(t || "").trim()}`;
                     if (!line.trim()) continue;
-                    ctx += line.slice(0, 420) + "\n";
+                    domCtx += line.slice(0, 420) + "\\n";
                 }
-                ctx = ctx.trim();
-                return ctx ? `[CHAT CONTEXT]\n${ctx}` : "";
+                domCtx = domCtx.trim();
+                return domCtx ? `[CHAT CONTEXT]\\n${domCtx}` : "";
             } catch (_) {
                 return "";
             }
